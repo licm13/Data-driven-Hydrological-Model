@@ -80,7 +80,7 @@ class GR4J:
         if t <= 0:
             return 0.0
         elif t < 1:
-            return (t / 1) ** 2.5
+            return t ** 2.5
         else:
             return 1.0
             

@@ -113,15 +113,30 @@ def kge(observed, simulated):
     
     if len(observed) == 0:
         return np.nan
+    
+    # Check for zero variance or zero mean
+    obs_std = np.std(observed)
+    sim_std = np.std(simulated)
+    obs_mean = np.mean(observed)
+    
+    if obs_std == 0 or sim_std == 0:
+        return np.nan
+    
+    if obs_mean == 0:
+        return np.nan
         
     # Correlation coefficient
     r = np.corrcoef(observed, simulated)[0, 1]
     
+    # Handle NaN from correlation (e.g., constant arrays)
+    if np.isnan(r):
+        return np.nan
+    
     # Relative variability
-    alpha = np.std(simulated) / np.std(observed)
+    alpha = sim_std / obs_std
     
     # Relative mean
-    beta = np.mean(simulated) / np.mean(observed)
+    beta = np.mean(simulated) / obs_mean
     
     # KGE
     kge_value = 1 - np.sqrt((r - 1)**2 + (alpha - 1)**2 + (beta - 1)**2)

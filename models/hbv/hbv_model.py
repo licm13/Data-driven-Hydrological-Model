@@ -154,8 +154,9 @@ class HBV:
             Recharge to response routine (mm)
         """
         # Actual evapotranspiration
-        if self.SM / self.FC < self.LP:
-            EA = EP * (self.SM / (self.LP * self.FC))
+        lp_fc = self.LP * self.FC
+        if lp_fc > 0 and self.SM / self.FC < self.LP:
+            EA = EP * (self.SM / lp_fc)
         else:
             EA = EP
             
@@ -163,7 +164,11 @@ class HBV:
         self.SM -= EA
         
         # Recharge to groundwater
-        recharge = liquid * (self.SM / self.FC) ** self.BETA
+        if self.FC > 0:
+            recharge = liquid * (self.SM / self.FC) ** self.BETA
+        else:
+            recharge = 0.0
+            
         self.SM += liquid - recharge
         
         # Soil moisture cannot exceed field capacity

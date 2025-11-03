@@ -160,7 +160,7 @@ class SWATPlus:
         E_soil = PET * self.ESCO
         
         # Reduce based on soil water availability
-        if SW < 0.5 * self.SOL_SW_MAX:
+        if self.SOL_SW_MAX > 0 and SW < 0.5 * self.SOL_SW_MAX:
             E_soil *= SW / (0.5 * self.SOL_SW_MAX)
             
         return min(E_soil, SW)
