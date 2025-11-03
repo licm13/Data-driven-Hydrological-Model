@@ -3,10 +3,6 @@
 """
 import argparse
 from pathlib import Path
-import sys
-
-# 添加项目路径
-sys.path.append(str(Path(__file__).parent))
 
 from experiments.experiment_1_learning_curves import run_experiment_1
 from experiments.experiment_2_sampling_strategies import run_experiment_2
