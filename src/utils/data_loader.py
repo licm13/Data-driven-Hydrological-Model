@@ -1,138 +1,305 @@
 """
-Data loading and preprocessing utilities for hydrological modeling
+数据加载和预处理工具
 """
-
 import numpy as np
 import pandas as pd
-from typing import Tuple, Dict, Optional
+from pathlib import Path
+from typing import Dict, Tuple, Optional, List
+import yaml
 
-
-class HydrologicalDataLoader:
-    """Load and preprocess hydrological data for modeling"""
+class CatchmentData:
+    """流域数据类"""
     
-    def __init__(self, data_path: Optional[str] = None):
+    def __init__(self, 
+                 name: str,
+                 precip: np.ndarray,
+                 temp: np.ndarray,
+                 pet: np.ndarray,
+                 discharge: np.ndarray,
+                 dates: pd.DatetimeIndex,
+                 area: float = None,
+                 elevation_range: Tuple[float, float] = None,
+                 metadata: Dict = None):
         """
-        Initialize data loader
-        
-        Args:
-            data_path: Path to the data file
+        Parameters:
+        -----------
+        name : str, 流域名称
+        precip : array, 降水 [mm/day]
+        temp : array, 温度 [°C]
+        pet : array, 潜在蒸散发 [mm/day]
+        discharge : array, 径流 [mm/day]
+        dates : DatetimeIndex, 时间索引
+        area : float, 流域面积 [km²]
+        elevation_range : tuple, 高程范围 [m]
+        metadata : dict, 其他元数据
         """
-        self.data_path = data_path
-        self.data = None
+        self.name = name
+        self.precip = precip
+        self.temp = temp
+        self.pet = pet
+        self.discharge = discharge
+        self.dates = dates
+        self.area = area
+        self.elevation_range = elevation_range
+        self.metadata = metadata or {}
         
-    def load_sample_data(self, n_samples: int = 1000, seed: int = 42) -> pd.DataFrame:
-        """
-        Generate synthetic hydrological data for demonstration
-        
-        Args:
-            n_samples: Number of samples to generate
-            seed: Random seed for reproducibility
-            
-        Returns:
-            DataFrame with hydrological features
-        """
-        np.random.seed(seed)
-        
-        # Runoff coefficient (typical value for moderately permeable soils)
-        # Represents the fraction of precipitation that becomes runoff
-        RUNOFF_COEFFICIENT = 0.7
-        
-        # Generate synthetic meteorological and hydrological data
-        dates = pd.date_range(start='2010-01-01', periods=n_samples, freq='D')
-        
-        data = pd.DataFrame({
-            'date': dates,
-            'precipitation': np.maximum(0, np.random.gamma(2, 2, n_samples)),  # mm/day
-            'temperature': 15 + 10 * np.sin(np.arange(n_samples) * 2 * np.pi / 365) + np.random.normal(0, 2, n_samples),  # Celsius
-            'pet': np.maximum(0, 3 + 2 * np.sin(np.arange(n_samples) * 2 * np.pi / 365) + np.random.normal(0, 0.5, n_samples)),  # Potential ET mm/day
-        })
-        
-        # Generate synthetic discharge (simplified rainfall-runoff relationship)
-        discharge = np.zeros(n_samples)
-        storage = 50.0  # Initial storage
-        
-        for i in range(n_samples):
-            # Simple storage-discharge model
-            inflow = data.loc[i, 'precipitation'] * RUNOFF_COEFFICIENT
-            et = min(storage * 0.05, data.loc[i, 'pet'])
-            storage += inflow - et
-            discharge[i] = max(0, storage * 0.1)
-            storage = max(0, storage - discharge[i])
-            
-        data['discharge'] = discharge + np.random.normal(0, 0.1, n_samples)  # Add noise
-        data['discharge'] = np.maximum(0, data['discharge'])
-        
-        self.data = data
-        return data
+        # 验证数据长度一致
+        assert len(precip) == len(temp) == len(pet) == len(discharge) == len(dates), \
+            "All data arrays must have the same length"
     
-    def prepare_training_data(self, data: pd.DataFrame, 
-                             train_size: int,
-                             features: list = None) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        """
-        Prepare training and validation data
-        
-        Args:
-            data: Input DataFrame
-            train_size: Number of training samples
-            features: List of feature columns (default: precipitation, temperature, pet)
-            
-        Returns:
-            X_train, X_val, y_train, y_val
-        """
-        if features is None:
-            features = ['precipitation', 'temperature', 'pet']
-            
-        X = data[features].values
-        y = data['discharge'].values
-        
-        # Split data
-        X_train = X[:train_size]
-        X_val = X[train_size:]
-        y_train = y[:train_size]
-        y_val = y[train_size:]
-        
-        return X_train, X_val, y_train, y_val
+    def __len__(self):
+        return len(self.dates)
     
-    def create_sequences(self, X: np.ndarray, y: np.ndarray, 
-                        seq_length: int = 7) -> Tuple[np.ndarray, np.ndarray]:
+    def __repr__(self):
+        return (f"CatchmentData(name='{self.name}', "
+                f"n_days={len(self)}, "
+                f"period={self.dates[0].date()} to {self.dates[-1].date()})")
+    
+    def split(self, 
+              train_period: Tuple[str, str],
+              test_period: Tuple[str, str],
+              warmup_days: int = 365) -> Tuple['CatchmentData', 'CatchmentData']:
         """
-        Create sequences for time series models (LSTM)
+        划分训练/测试数据
         
-        Args:
-            X: Input features
-            y: Target values
-            seq_length: Length of input sequences
-            
+        Parameters:
+        -----------
+        train_period : tuple, 训练期 (start, end)
+        test_period : tuple, 测试期 (start, end)
+        warmup_days : int, 预热期天数
+        
         Returns:
-            X_seq, y_seq
+        --------
+        train_data : CatchmentData
+        test_data : CatchmentData
         """
-        X_seq, y_seq = [], []
+        # 训练期（包含预热）
+        train_start = pd.Timestamp(train_period[0]) - pd.Timedelta(days=warmup_days)
+        train_end = pd.Timestamp(train_period[1])
+        train_mask = (self.dates >= train_start) & (self.dates <= train_end)
         
-        for i in range(len(X) - seq_length):
-            X_seq.append(X[i:i+seq_length])
-            y_seq.append(y[i+seq_length])
-            
-        return np.array(X_seq), np.array(y_seq)
+        train_data = CatchmentData(
+            name=self.name + '_train',
+            precip=self.precip[train_mask],
+            temp=self.temp[train_mask],
+            pet=self.pet[train_mask],
+            discharge=self.discharge[train_mask],
+            dates=self.dates[train_mask],
+            area=self.area,
+            elevation_range=self.elevation_range,
+            metadata={**self.metadata, 'warmup_days': warmup_days}
+        )
+        
+        # 测试期（包含预热）
+        test_start = pd.Timestamp(test_period[0]) - pd.Timedelta(days=warmup_days)
+        test_end = pd.Timestamp(test_period[1])
+        test_mask = (self.dates >= test_start) & (self.dates <= test_end)
+        
+        test_data = CatchmentData(
+            name=self.name + '_test',
+            precip=self.precip[test_mask],
+            temp=self.temp[test_mask],
+            pet=self.pet[test_mask],
+            discharge=self.discharge[test_mask],
+            dates=self.dates[test_mask],
+            area=self.area,
+            elevation_range=self.elevation_range,
+            metadata={**self.metadata, 'warmup_days': warmup_days}
+        )
+        
+        return train_data, test_data
+    
+    def get_statistics(self) -> Dict:
+        """计算数据统计特征"""
+        return {
+            'precip': {
+                'mean': np.mean(self.precip),
+                'std': np.std(self.precip),
+                'max': np.max(self.precip),
+                'min': np.min(self.precip),
+            },
+            'temp': {
+                'mean': np.mean(self.temp),
+                'std': np.std(self.temp),
+                'max': np.max(self.temp),
+                'min': np.min(self.temp),
+            },
+            'pet': {
+                'mean': np.mean(self.pet),
+                'std': np.std(self.pet),
+                'max': np.max(self.pet),
+                'min': np.min(self.pet),
+            },
+            'discharge': {
+                'mean': np.mean(self.discharge),
+                'std': np.std(self.discharge),
+                'max': np.max(self.discharge),
+                'min': np.min(self.discharge),
+                'q95': np.percentile(self.discharge, 95),
+                'q5': np.percentile(self.discharge, 5),
+            }
+        }
+    
+    def to_dataframe(self) -> pd.DataFrame:
+        """转换为DataFrame"""
+        return pd.DataFrame({
+            'date': self.dates,
+            'precip': self.precip,
+            'temp': self.temp,
+            'pet': self.pet,
+            'discharge': self.discharge,
+        }).set_index('date')
 
 
-def normalize_data(X: np.ndarray, mean: np.ndarray = None, 
-                   std: np.ndarray = None) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+def load_catchment_from_csv(data_dir: str, 
+                            catchment_name: str,
+                            config: Dict = None) -> CatchmentData:
     """
-    Normalize data using z-score normalization
+    从CSV文件加载流域数据
     
-    Args:
-        X: Input data
-        mean: Mean values (computed if not provided)
-        std: Standard deviation (computed if not provided)
-        
+    预期文件结构：
+    data_dir/
+        catchment_name/
+            meteorology.csv  (columns: date, precip, temp, pet)
+            discharge.csv    (columns: date, discharge)
+            config.yaml      (可选)
+    
+    Parameters:
+    -----------
+    data_dir : str, 数据目录
+    catchment_name : str, 流域名称
+    config : dict, 配置（如果不提供，从config.yaml读取）
+    
     Returns:
-        X_normalized, mean, std
+    --------
+    data : CatchmentData
     """
-    if mean is None:
-        mean = np.mean(X, axis=0)
-    if std is None:
-        std = np.std(X, axis=0)
-        std[std == 0] = 1.0  # Avoid division by zero
+    data_path = Path(data_dir) / catchment_name
+    
+    # 加载配置
+    if config is None:
+        config_file = data_path / 'config.yaml'
+        if config_file.exists():
+            with open(config_file, 'r') as f:
+                config = yaml.safe_load(f)
+        else:
+            config = {}
+    
+    # 加载气象数据
+    meteo_file = data_path / 'meteorology.csv'
+    meteo_df = pd.read_csv(meteo_file, parse_dates=['date'])
+    
+    # 加载径流数据
+    discharge_file = data_path / 'discharge.csv'
+    discharge_df = pd.read_csv(discharge_file, parse_dates=['date'])
+    
+    # 合并
+    df = pd.merge(meteo_df, discharge_df, on='date', how='inner')
+    df = df.sort_values('date').reset_index(drop=True)
+    
+    # 创建CatchmentData对象
+    data = CatchmentData(
+        name=catchment_name,
+        precip=df['precip'].values,
+        temp=df['temp'].values,
+        pet=df['pet'].values,
+        discharge=df['discharge'].values,
+        dates=pd.DatetimeIndex(df['date']),
+        area=config.get('area'),
+        elevation_range=config.get('elevation_range'),
+        metadata=config
+    )
+    
+    return data
+
+
+def generate_synthetic_data(n_days: int = 3650,
+                           seed: int = 42) -> CatchmentData:
+    """
+    生成合成数据用于测试
+    
+    Parameters:
+    -----------
+    n_days : int, 天数
+    seed : int, 随机种子
+    
+    Returns:
+    --------
+    data : CatchmentData
+    """
+    np.random.seed(seed)
+    
+    # 生成日期
+    dates = pd.date_range('2000-01-01', periods=n_days, freq='D')
+    
+    # 生成气象数据（带季节性）
+    t = np.arange(n_days)
+    
+    # 降水：泊松过程 + 季节性
+    seasonal_precip = 5 + 3 * np.sin(2 * np.pi * t / 365)
+    precip = np.random.gamma(2, seasonal_precip / 2)
+    
+    # 温度：正弦波 + 噪声
+    temp = 10 + 10 * np.sin(2 * np.pi * (t - 80) / 365) + np.random.randn(n_days) * 2
+    
+    # 蒸发：与温度相关
+    pet = np.maximum(0, 2 + 0.3 * temp + np.random.randn(n_days) * 0.5)
+    
+    # 径流：简单水量平衡 + 延迟
+    storage = 100.0
+    discharge = np.zeros(n_days)
+    
+    for i in range(n_days):
+        # 入流
+        inflow = max(0, precip[i] - pet[i])
+        storage += inflow
         
-    X_normalized = (X - mean) / std
-    return X_normalized, mean, std
+        # 出流（线性水库）
+        outflow = 0.1 * storage
+        storage -= outflow
+        discharge[i] = outflow
+        
+        # 限制存储
+        storage = max(0, min(storage, 300))
+    
+    data = CatchmentData(
+        name='synthetic',
+        precip=precip,
+        temp=temp,
+        pet=pet,
+        discharge=discharge,
+        dates=dates,
+        area=1000.0,
+        elevation_range=(100, 500),
+        metadata={'type': 'synthetic'}
+    )
+    
+    return data
+
+
+def load_multiple_catchments(data_dir: str, 
+                             catchment_names: List[str]) -> Dict[str, CatchmentData]:
+    """
+    加载多个流域数据
+    
+    Parameters:
+    -----------
+    data_dir : str, 数据目录
+    catchment_names : list, 流域名称列表
+    
+    Returns:
+    --------
+    catchments : dict, {name: CatchmentData}
+    """
+    catchments = {}
+    
+    for name in catchment_names:
+        print(f"Loading {name}...")
+        try:
+            data = load_catchment_from_csv(data_dir, name)
+            catchments[name] = data
+            print(f"  Loaded {len(data)} days of data")
+        except Exception as e:
+            print(f"  Error loading {name}: {e}")
+    
+    return catchments

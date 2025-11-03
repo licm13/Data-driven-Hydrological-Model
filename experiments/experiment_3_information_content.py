@@ -6,8 +6,6 @@ import numpy as np
 import argparse
 from pathlib import Path
 import pickle
-import sys
-sys.path.append(str(Path(__file__).parent.parent))
 
 from src.utils.data_loader import load_catchment_from_csv, load_multiple_catchments
 from src.metrics.entropy import joint_entropy, conditional_entropy

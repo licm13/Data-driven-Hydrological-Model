@@ -7,8 +7,6 @@ import argparse
 from pathlib import Path
 import pickle
 from tqdm import tqdm
-import sys
-sys.path.append(str(Path(__file__).parent.parent))
 
 from src.models import HBV
 from src.utils.data_loader import load_catchment_from_csv, generate_synthetic_data
