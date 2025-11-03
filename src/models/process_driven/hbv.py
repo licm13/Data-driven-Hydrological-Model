@@ -146,7 +146,10 @@ class HBV:
         Returns:
             Best parameters
         """
-        from ..utils.metrics import nash_sutcliffe_efficiency
+        try:
+            from utils.metrics import nash_sutcliffe_efficiency
+        except ImportError:
+            from ...utils.metrics import nash_sutcliffe_efficiency
         
         best_nse = -np.inf
         best_params = None

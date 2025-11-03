@@ -7,7 +7,10 @@ import pandas as pd
 from typing import Dict, List, Tuple
 from tqdm import tqdm
 
-from ..utils.metrics import evaluate_model
+try:
+    from ..utils.metrics import evaluate_model
+except ImportError:
+    from utils.metrics import evaluate_model
 
 
 class LearningCurveEvaluator:
@@ -60,8 +63,13 @@ class LearningCurveEvaluator:
             y_val = y[train_size:train_size + val_size]
             
             try:
-                # Fit model
-                model.fit(X_train, y_train)
+                # Fit model - try both fit() and calibrate() methods
+                if hasattr(model, 'fit'):
+                    model.fit(X_train, y_train)
+                elif hasattr(model, 'calibrate'):
+                    model.calibrate(X_train, y_train, n_iterations=50)
+                else:
+                    raise AttributeError("Model must have either fit() or calibrate() method")
                 
                 # Predict on validation set
                 y_pred = model.predict(X_val)
@@ -198,6 +206,10 @@ class LearningCurveEvaluator:
         efficiency_data = []
         
         for model_name, df in self.results.items():
+            # Skip if no results
+            if len(df) == 0:
+                continue
+                
             df_sorted = df.sort_values('train_size')
             
             if len(df_sorted) < 2:
