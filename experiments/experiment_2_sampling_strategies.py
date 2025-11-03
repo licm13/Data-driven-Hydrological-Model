@@ -113,20 +113,24 @@ def run_experiment_2(catchment_name: str,
             # 对每个重复
             n_reps = len(sampling_indices)
             for rep_idx, indices in enumerate(tqdm(sampling_indices, desc=f"  Replicates")):
-                # 调整索引
+                # 调整索引（加上预热期偏移）
                 train_indices = indices + 365
+                max_idx = np.max(train_indices)
                 
                 try:
                     # 创建HBV模型
                     model = HBV(n_elevation_zones=1)
                     
-                    # 校准
+                    # 确定需要的数据长度（到最大索引）
+                    data_length = max_idx + 1
+                    
+                    # 校准（使用到最大索引的所有数据）
                     calib_results = calibrate_model(
                         model,
-                        precip=train_data.precip[:len(train_indices)+365],
-                        temp=train_data.temp[:len(train_indices)+365],
-                        pet=train_data.pet[:len(train_indices)+365],
-                        discharge_obs=train_data.discharge[:len(train_indices)+365],
+                        precip=train_data.precip[:data_length],
+                        temp=train_data.temp[:data_length],
+                        pet=train_data.pet[:data_length],
+                        discharge_obs=train_data.discharge[:data_length],
                         algorithm='lhs',
                         n_iterations=min(500, sample_size * 2),
                         warmup_period=365,
@@ -141,9 +145,9 @@ def run_experiment_2(catchment_name: str,
                         warmup_steps=365
                     )
                     
-                    # 评估
+                    # 评估（simulate方法已经移除了预热期）
                     discharge_obs = test_data.discharge[365:]
-                    discharge_sim = discharge_sim[365:]
+                    # discharge_sim 已经是移除预热期后的结果
                     
                     # 熵
                     entropy_metrics = evaluate_model_entropy(discharge_obs, discharge_sim)

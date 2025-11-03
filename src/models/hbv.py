@@ -206,17 +206,25 @@ class HBV(BaseHydrologicalModel):
         """
         MAXBAS = self.parameters['MAXBAS']
         
+        # 确保MAXBAS至少为1
+        MAXBAS = max(MAXBAS, 1.0)
+        
         # 三角形单位线权重
         n = int(MAXBAS) + 1
         weights = np.zeros(n)
         for i in range(n):
             if i <= MAXBAS / 2:
-                weights[i] = i / (MAXBAS / 2)
+                weights[i] = i / (MAXBAS / 2) if MAXBAS > 0 else 1.0
             else:
-                weights[i] = (MAXBAS - i) / (MAXBAS / 2)
+                weights[i] = (MAXBAS - i) / (MAXBAS / 2) if MAXBAS > 0 else 0.0
         
-        # 归一化
-        weights = weights / np.sum(weights)
+        # 归一化（避免除零）
+        weight_sum = np.sum(weights)
+        if weight_sum > 0:
+            weights = weights / weight_sum
+        else:
+            # 如果权重和为0，设置简单的单位权重
+            weights = np.ones(n) / n
         
         # 更新存储
         self.states['routing_store'] = np.roll(self.states['routing_store'], 1)

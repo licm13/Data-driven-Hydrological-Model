@@ -2,12 +2,21 @@
 SPOTPY校准框架包装器
 用于统一校准过程驱动模型
 """
+import sys
+import os
 import numpy as np
 import spotpy
 from spotpy.parameter import Uniform
 from typing import Dict, Callable, List
-from ..metrics.kge import kge
-from ..metrics.entropy import conditional_entropy
+
+# 添加src目录到Python路径
+current_dir = os.path.dirname(os.path.abspath(__file__))
+src_dir = os.path.dirname(current_dir)
+if src_dir not in sys.path:
+    sys.path.insert(0, src_dir)
+
+from metrics.kge import kge
+from metrics.entropy import conditional_entropy
 
 class SpotpySetup:
     """
@@ -113,7 +122,7 @@ class SpotpySetup:
         if self.objective_function == 'kge':
             return kge(obs, sim)
         elif self.objective_function == 'nse':
-            from ..metrics.kge import nse
+            from metrics.kge import nse
             return nse(obs, sim)
         elif self.objective_function == 'entropy':
             # 条件熵：越小越好，所以取负数
@@ -202,7 +211,18 @@ def calibrate_model(model,
     
     # 运行采样
     print(f"Calibrating {model.name} using {algorithm.upper()} with {n_iterations} iterations...")
-    sampler.sample(n_iterations, n_jobs=n_jobs)
+    
+    # 根据算法选择采样方法
+    if algorithm.lower() in ['lhs', 'mc']:
+        # LHS和MC采样器只接受repetitions参数
+        sampler.sample(n_iterations)
+    else:
+        # 其他算法可能支持n_jobs参数
+        try:
+            sampler.sample(n_iterations, n_jobs=n_jobs)
+        except TypeError:
+            # 如果不支持n_jobs，则只传递n_iterations
+            sampler.sample(n_iterations)
     
     # 获取结果
     results_obj = sampler.getdata()

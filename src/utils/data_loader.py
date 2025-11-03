@@ -158,37 +158,69 @@ def load_catchment_from_csv(data_dir: str,
     """
     从CSV文件加载流域数据
     
-    预期文件结构：
-    data_dir/
-        catchment_name/
-            meteorology.csv  (columns: date, precip, temp, pet)
-            discharge.csv    (columns: date, discharge)
-            config.yaml      (可选)
+    支持的文件结构：
+    1) data_dir/catchment_name/[meteorology.csv, discharge.csv]
+    2) data_dir/catchment_name/[单独的 .csv/.asc 文件]
+    3) data_dir/[catchment_specific_files.csv/.asc]
+    4) IMPRO数据集特殊格式
     
     Parameters:
     -----------
     data_dir : str, 数据目录
-    catchment_name : str, 流域名称
+    catchment_name : str, 流域名称（支持大小写变体）
     config : dict, 配置（如果不提供，从config.yaml读取）
     
     Returns:
     --------
     data : CatchmentData
     """
-    data_path = Path(data_dir) / catchment_name
+    # 检查是否为IMPRO数据集
+    data_path = Path(data_dir)
+    if 'IMPRO' in str(data_path).upper() or any((data_path / variant).exists() for variant in [catchment_name.lower(), catchment_name.upper()]):
+        try:
+            print(f"Detected IMPRO dataset format for {catchment_name}")
+            from .impro_loader import load_impro_catchment, convert_impro_to_catchment_data
+            impro_data = load_impro_catchment(data_dir, catchment_name)
+            return convert_impro_to_catchment_data(impro_data, catchment_name)
+        except Exception as e:
+            print(f"IMPRO loader failed: {e}")
+            print("Falling back to generic loader...")
+    
+    # 原有的通用加载逻辑
+    # 尝试匹配流域目录（支持大小写变体）
+    catchment_dir = None
+    catchment_name_variants = [
+        catchment_name,
+        catchment_name.lower(),
+        catchment_name.upper(),
+        catchment_name.capitalize(),
+        catchment_name.title()
+    ]
+    
+    for variant in catchment_name_variants:
+        candidate_dir = data_path / variant
+        if candidate_dir.exists() and candidate_dir.is_dir():
+            catchment_dir = candidate_dir
+            print(f"Found catchment directory: {catchment_dir}")
+            break
+    
+    # 如果没有找到流域子目录，使用数据根目录
+    if catchment_dir is None:
+        catchment_dir = data_path
+        print(f"Using data root directory: {catchment_dir}")
     
     # 加载配置
     if config is None:
-        config_file = data_path / 'config.yaml'
+        config_file = catchment_dir / 'config.yaml'
         if config_file.exists():
             with open(config_file, 'r') as f:
                 config = yaml.safe_load(f)
         else:
             config = {}
     
-    # 加载气象与径流数据（支持CSV或通用ASCII回退）
-    meteo_file = data_path / 'meteorology.csv'
-    discharge_file = data_path / 'discharge.csv'
+    # 尝试标准CSV结构
+    meteo_file = catchment_dir / 'meteorology.csv'
+    discharge_file = catchment_dir / 'discharge.csv'
 
     if meteo_file.exists() and discharge_file.exists():
         meteo_df = pd.read_csv(meteo_file, parse_dates=['date'])
@@ -196,12 +228,22 @@ def load_catchment_from_csv(data_dir: str,
     else:
         # 回退：尝试从通用文件结构（ASCII/空白分隔/TSV）自动解析
         meteo_df, discharge_df = _load_catchment_from_folder_generic(
-            data_path, config
+            catchment_dir, config, catchment_name
         )
     
     # 合并
     df = pd.merge(meteo_df, discharge_df, on='date', how='inner')
     df = df.sort_values('date').reset_index(drop=True)
+    
+    # 验证数据质量
+    if len(df) == 0:
+        raise ValueError(f"No overlapping dates found between meteorology and discharge data for {catchment_name}")
+    
+    # 检查必需列
+    required_cols = ['precip', 'temp', 'pet', 'discharge']
+    missing_cols = [col for col in required_cols if col not in df.columns]
+    if missing_cols:
+        raise ValueError(f"Missing columns in data for {catchment_name}: {missing_cols}")
     
     # 创建CatchmentData对象
     data = CatchmentData(
@@ -216,6 +258,7 @@ def load_catchment_from_csv(data_dir: str,
         metadata=config
     )
     
+    print(f"Successfully loaded {len(data)} days of data for {catchment_name}")
     return data
 
 
@@ -237,35 +280,57 @@ def _read_table_with_date(
     - Tries multiple separators (comma, semicolon, tab, whitespace)
     - Detects date column by common names or by (year, month, day)
     - Applies optional columns_map to rename columns
+    - Handles ASCII raster format and other specialized formats
     """
     if not file_path.exists():
         raise FileNotFoundError(str(file_path))
 
+    # Special handling for .asc files which might be ASCII raster format
+    if file_path.suffix.lower() == '.asc':
+        try:
+            return _read_asc_time_series(file_path)
+        except Exception as e:
+            print(f"Failed to read as ASCII time series, trying generic: {e}")
+            # Fall through to generic reading
+
     seps = [specified_sep] if specified_sep else [',', ';', '\t', None]
     errors = []
     df: Optional[pd.DataFrame] = None
+    
     for sep in seps:
         try:
+            read_kwargs = {
+                'engine': 'python',
+                'comment': '#',
+                'skipinitialspace': True,
+            }
+            
             if sep is None:
                 # Let pandas infer, try delim_whitespace
-                df = pd.read_csv(
-                    file_path, engine='python', delim_whitespace=True, comment='#'
-                )
+                read_kwargs['delim_whitespace'] = True
             else:
-                if decimal is not None:
-                    df = pd.read_csv(
-                        file_path, engine='python', sep=sep, decimal=decimal, comment='#'
-                    )
-                else:
-                    df = pd.read_csv(
-                        file_path, engine='python', sep=sep, comment='#'
-                    )
-            break
+                read_kwargs['sep'] = sep
+                
+            if decimal is not None:
+                read_kwargs['decimal'] = decimal
+                
+            df = pd.read_csv(file_path, **read_kwargs)
+            
+            # Check if we got reasonable data
+            if len(df) > 0 and len(df.columns) > 1:
+                break
+            else:
+                df = None
+                
         except Exception as e:
             errors.append((sep, str(e)))
             df = None
+            
     if df is None:
         raise ValueError(f"Failed to read {file_path} with tried seps: {errors}")
+
+    # Clean up column names (remove whitespace, handle encoding issues)
+    df.columns = [str(col).strip() for col in df.columns]
 
     # Normalize columns
     if columns_map:
@@ -276,46 +341,155 @@ def _read_table_with_date(
     date_col = next((cols_lower[c.lower()] for c in DATE_CANDIDATES if c.lower() in cols_lower), None)
 
     if date_col is not None:
-        df['date'] = pd.to_datetime(df[date_col])
+        try:
+            df['date'] = pd.to_datetime(df[date_col])
+        except Exception as e:
+            print(f"Failed to parse date column {date_col}: {e}")
+            # Try alternative date parsing
+            df['date'] = pd.to_datetime(df[date_col], errors='coerce')
+            if df['date'].isna().all():
+                raise ValueError(f"Could not parse any dates from column {date_col}")
     else:
         # Try year, month, day pattern
-        # Look for columns representing year/month/day
         def find_col(names: List[str]) -> Optional[str]:
             for n in names:
                 for col in df.columns:
                     if col.lower() == n:
                         return col
             return None
+            
         year_col = find_col(['year', 'yy', 'yyyy'])
         month_col = find_col(['month', 'mm'])
         day_col = find_col(['day', 'dd'])
+        
         if all([year_col, month_col, day_col]):
-            tmp = df[[year_col, month_col, day_col]].astype(int).copy()
-            tmp.columns = ['year', 'month', 'day']
-            df['date'] = pd.to_datetime(tmp)
+            try:
+                tmp = df[[year_col, month_col, day_col]].astype(int).copy()
+                tmp.columns = ['year', 'month', 'day']
+                df['date'] = pd.to_datetime(tmp)
+            except Exception as e:
+                raise ValueError(f"Could not construct date from year/month/day columns: {e}")
         else:
-            # Give up on auto date; try index as day count (very rare); raise helpful error
-            raise ValueError(
-                f"Could not infer date column in {file_path}. Provide config.yaml with columns mapping."
-            )
+            # Try to infer from index or create artificial dates
+            if len(df) > 0:
+                print(f"Warning: No date column found in {file_path}, creating artificial dates")
+                df['date'] = pd.date_range('2000-01-01', periods=len(df), freq='D')
+            else:
+                raise ValueError(
+                    f"Could not infer date column in {file_path}. Provide config.yaml with columns mapping."
+                )
 
     # Ensure 'date' is first-class and sorted
     if 'date' not in df.columns:
         raise ValueError(f"No date parsed from {file_path}")
+    
+    # Remove rows with invalid dates
+    df = df.dropna(subset=['date'])
+    
     return df
+
+
+def _read_asc_time_series(file_path: Path) -> pd.DataFrame:
+    """
+    Read ASCII time series format commonly used in hydrology.
+    
+    Expected formats:
+    1) Simple format: date value
+    2) Multi-column format: year month day value
+    3) Header with metadata followed by data
+    """
+    with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+        lines = f.readlines()
+    
+    # Remove empty lines and comments
+    data_lines = []
+    for line in lines:
+        line = line.strip()
+        if line and not line.startswith('#') and not line.startswith('//'):
+            data_lines.append(line)
+    
+    if not data_lines:
+        raise ValueError(f"No data lines found in {file_path}")
+    
+    # Try to detect format by examining first few lines
+    first_line_parts = data_lines[0].split()
+    
+    if len(first_line_parts) >= 2:
+        # Check if first column looks like a date
+        try:
+            pd.to_datetime(first_line_parts[0])
+            # Simple date value format
+            data = []
+            for line in data_lines:
+                parts = line.split()
+                if len(parts) >= 2:
+                    try:
+                        date = pd.to_datetime(parts[0])
+                        value = float(parts[1])
+                        data.append({'date': date, 'value': value})
+                    except:
+                        continue
+            return pd.DataFrame(data)
+        except:
+            pass
+    
+    # Try year month day value format
+    if len(first_line_parts) >= 4:
+        try:
+            year = int(first_line_parts[0])
+            month = int(first_line_parts[1])
+            day = int(first_line_parts[2])
+            if 1900 <= year <= 2100 and 1 <= month <= 12 and 1 <= day <= 31:
+                data = []
+                for line in data_lines:
+                    parts = line.split()
+                    if len(parts) >= 4:
+                        try:
+                            year = int(parts[0])
+                            month = int(parts[1])
+                            day = int(parts[2])
+                            value = float(parts[3])
+                            date = pd.Timestamp(year, month, day)
+                            data.append({'date': date, 'value': value})
+                        except:
+                            continue
+                return pd.DataFrame(data)
+        except:
+            pass
+    
+    # Try generic whitespace-separated format
+    try:
+        # Convert to a string that pandas can read
+        text_data = '\n'.join(data_lines)
+        from io import StringIO
+        df = pd.read_csv(StringIO(text_data), sep=r'\s+', header=None, engine='python')
+        
+        # Auto-assign column names
+        if len(df.columns) == 2:
+            df.columns = ['date', 'value']
+        elif len(df.columns) >= 4:
+            df.columns = ['year', 'month', 'day', 'value'] + [f'col_{i}' for i in range(4, len(df.columns))]
+        else:
+            df.columns = [f'col_{i}' for i in range(len(df.columns))]
+        
+        return df
+    except Exception as e:
+        raise ValueError(f"Could not parse ASCII file {file_path}: {e}")
 
 
 def _load_catchment_from_folder_generic(
     catchment_dir: Path,
-    config: Optional[Dict]
+    config: Optional[Dict],
+    catchment_name: str = None
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """Attempt to load meteorology (precip,temp,pet) and discharge from a folder.
 
     Priority:
       1) Use explicit paths and column maps from config.yaml if present
-      2) Try to detect combined meteorology file containing precip/temp/pet
-      3) Try to detect separate files for precip, temp, pet and merge on date
-      4) Detect discharge file by common keywords
+      2) Try to detect files with catchment-specific naming (e.g., discharge_iller.csv)
+      3) Try to detect combined meteorology file containing precip/temp/pet
+      4) Try to detect separate files for precip, temp, pet and merge on date
+      5) Detect discharge file by common keywords
     """
     cfg = config or {}
 
@@ -342,71 +516,144 @@ def _load_catchment_from_folder_generic(
         q_df = _standardize_discharge_columns(q_df)
         return met_df, q_df
 
-    # 2/3) Heuristic detection
+    # 2) Catchment-specific file detection
     files = list(catchment_dir.glob('**/*'))
     cand = [f for f in files if f.suffix.lower() in ('.csv', '.txt', '.dat', '.asc', '.tsv')]
+    
+    # Create catchment name variants for file matching
+    catchment_variants = []
+    if catchment_name:
+        catchment_variants = [
+            catchment_name.lower(),
+            catchment_name.upper(),
+            catchment_name.capitalize(),
+            catchment_name.title()
+        ]
 
     def has_keywords(path: Path, keywords: List[str]) -> bool:
         name = path.name.lower()
         return any(k in name for k in keywords)
+    
+    def has_catchment_specific(path: Path, variable_keywords: List[str]) -> bool:
+        """Check if file matches catchment-specific pattern like 'discharge_iller.csv'"""
+        name = path.name.lower()
+        for var_keyword in variable_keywords:
+            for catchment_var in catchment_variants:
+                pattern = f"{var_keyword}_{catchment_var}"
+                if pattern in name:
+                    return True
+        return False
 
-    # Discharge candidates
+    # Discharge detection (prioritize catchment-specific files)
     q_keywords = ['discharge', 'runoff', 'flow', 'qobs', 'q_', 'q-']
-    q_files = [f for f in cand if has_keywords(f, q_keywords)]
+    q_files = []
+    
+    # First, try catchment-specific files
+    if catchment_variants:
+        q_files.extend([f for f in cand if has_catchment_specific(f, q_keywords)])
+    
+    # Then, try general keyword matching
+    if not q_files:
+        q_files = [f for f in cand if has_keywords(f, q_keywords)]
+    
     q_df = None
     for f in q_files:
         try:
+            print(f"Trying to load discharge from: {f}")
             df = _read_table_with_date(f)
             df = _standardize_discharge_columns(df)
             q_df = df
+            print(f"Successfully loaded discharge data with {len(df)} records")
             break
-        except Exception:
+        except Exception as e:
+            print(f"Failed to load {f}: {e}")
             continue
+    
     if q_df is None:
+        available_files = [f.name for f in cand]
         raise FileNotFoundError(
-            f"Could not find discharge file in {catchment_dir}. Provide config.yaml with 'discharge' mapping."
+            f"Could not find discharge file in {catchment_dir}. "
+            f"Available files: {available_files}. "
+            f"Provide config.yaml with 'discharge' mapping."
         )
 
-    # Meteorology: combined file first
+    # Meteorology detection (prioritize catchment-specific files)
     met_keywords = ['meteo', 'meteor', 'met', 'climate', 'weather']
-    met_files = [f for f in cand if has_keywords(f, met_keywords)]
+    met_files = []
+    
+    # First, try catchment-specific combined meteorology files
+    if catchment_variants:
+        met_files.extend([f for f in cand if has_catchment_specific(f, met_keywords)])
+    
+    # Then, try general keyword matching
+    if not met_files:
+        met_files = [f for f in cand if has_keywords(f, met_keywords)]
+    
     met_df = None
     for f in met_files:
         try:
+            print(f"Trying to load meteorology from: {f}")
             df = _read_table_with_date(f)
             df = _standardize_meteorology_columns(df)
             if {'precip', 'temp', 'pet'}.issubset(df.columns):
                 met_df = df
+                print(f"Successfully loaded combined meteorology data with {len(df)} records")
                 break
-        except Exception:
+        except Exception as e:
+            print(f"Failed to load combined meteorology from {f}: {e}")
             continue
 
     # If not combined, try separate series and merge
     if met_df is None:
-        precip_files = [f for f in cand if has_keywords(f, ['precip', 'ppt', 'pr'])]
-        temp_files = [f for f in cand if has_keywords(f, ['temp', 'tmean', 't'])]
-        pet_files = [f for f in cand if has_keywords(f, ['pet', 'evap', 'et0', 'eto', 'evapo'])]
+        print("Trying to load separate meteorology files...")
+        # Prioritize catchment-specific files
+        precip_files = []
+        temp_files = []
+        pet_files = []
+        
+        if catchment_variants:
+            precip_files.extend([f for f in cand if has_catchment_specific(f, ['precip', 'precipitation', 'ppt', 'pr'])])
+            temp_files.extend([f for f in cand if has_catchment_specific(f, ['temp', 'temperature', 'tmean', 't'])])
+            pet_files.extend([f for f in cand if has_catchment_specific(f, ['pet', 'evap', 'et0', 'eto', 'evapo'])])
+        
+        # Fallback to general keyword matching
+        if not precip_files:
+            precip_files = [f for f in cand if has_keywords(f, ['precip', 'ppt', 'pr'])]
+        if not temp_files:
+            temp_files = [f for f in cand if has_keywords(f, ['temp', 'tmean', 't'])]
+        if not pet_files:
+            pet_files = [f for f in cand if has_keywords(f, ['pet', 'evap', 'et0', 'eto', 'evapo'])]
 
         parts = {}
         for label, flist in [('precip', precip_files), ('temp', temp_files), ('pet', pet_files)]:
             for f in flist:
                 try:
+                    print(f"Trying to load {label} from: {f}")
                     df = _read_table_with_date(f)
                     # Pick first numeric column (besides date)
-                    value_cols = [c for c in df.columns if c != 'date']
+                    value_cols = [c for c in df.columns if c != 'date' and pd.api.types.is_numeric_dtype(df[c])]
                     if not value_cols:
+                        print(f"No numeric columns found in {f}")
                         continue
                     parts[label] = df[['date', value_cols[0]]].rename(columns={value_cols[0]: label})
+                    print(f"Successfully loaded {label} data with {len(parts[label])} records")
                     break
-                except Exception:
+                except Exception as e:
+                    print(f"Failed to load {label} from {f}: {e}")
                     continue
+        
         if set(parts.keys()) == {'precip', 'temp', 'pet'}:
             met_df = parts['precip']
             met_df = met_df.merge(parts['temp'], on='date', how='inner')
             met_df = met_df.merge(parts['pet'], on='date', how='inner')
+            print(f"Successfully merged separate meteorology files, {len(met_df)} records")
         else:
+            missing = {'precip', 'temp', 'pet'} - set(parts.keys())
+            available_files = [f.name for f in cand]
             raise FileNotFoundError(
-                f"Could not detect meteorology files in {catchment_dir}. Provide config.yaml with 'meteorology' mapping."
+                f"Could not detect meteorology files in {catchment_dir}. "
+                f"Missing: {missing}. Available files: {available_files}. "
+                f"Provide config.yaml with 'meteorology' mapping."
             )
 
     # Final standardization and sorting
