@@ -63,11 +63,13 @@ class LearningCurveEvaluator:
             y_val = y[train_size:train_size + val_size]
             
             try:
-                # Fit model - try both fit() and calibrate() methods
-                if hasattr(model, 'fit'):
-                    model.fit(X_train, y_train)
-                elif hasattr(model, 'calibrate'):
+                # Prefer calibrate() for process-driven models, fit() for data-driven
+                if hasattr(model, 'calibrate'):
+                    # Process-driven model
                     model.calibrate(X_train, y_train, n_iterations=50)
+                elif hasattr(model, 'fit'):
+                    # Data-driven model
+                    model.fit(X_train, y_train)
                 else:
                     raise AttributeError("Model must have either fit() or calibrate() method")
                 

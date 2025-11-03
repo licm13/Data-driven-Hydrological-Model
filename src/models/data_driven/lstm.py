@@ -209,11 +209,6 @@ class LSTM:
                 optimizer.step()
                 
                 epoch_loss += loss.item()
-            
-            # Optional: print progress
-            if (epoch + 1) % 20 == 0:
-                avg_loss = epoch_loss / len(dataloader)
-                # print(f'Epoch [{epoch+1}/{self.epochs}], Loss: {avg_loss:.4f}')
         
         self.is_fitted = True
     

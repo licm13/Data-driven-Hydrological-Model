@@ -24,11 +24,19 @@ class GR4J:
         Initialize GR4J model
         
         Args:
-            X1: Maximum capacity of production store (mm)
+            X1: Maximum capacity of production store (mm) - must be positive
             X2: Groundwater exchange coefficient (mm)
-            X3: Maximum capacity of routing store (mm)
-            X4: Time base of unit hydrograph (days)
+            X3: Maximum capacity of routing store (mm) - must be positive
+            X4: Time base of unit hydrograph (days) - must be positive
         """
+        # Validate parameters
+        if X1 <= 0:
+            raise ValueError("X1 (production store capacity) must be positive")
+        if X3 <= 0:
+            raise ValueError("X3 (routing store capacity) must be positive")
+        if X4 <= 0:
+            raise ValueError("X4 (unit hydrograph time base) must be positive")
+        
         self.X1 = X1
         self.X2 = X2
         self.X3 = X3

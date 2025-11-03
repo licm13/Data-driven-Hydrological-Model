@@ -27,13 +27,27 @@ class HBV:
         Initialize HBV model
         
         Args:
-            FC: Maximum soil moisture storage (mm)
-            BETA: Shape parameter
-            LP: Soil moisture threshold
-            K0: Upper zone recession coefficient
-            K1: Lower zone recession coefficient
-            PERC: Percolation rate (mm/day)
+            FC: Maximum soil moisture storage (mm) - must be positive
+            BETA: Shape parameter - must be positive
+            LP: Soil moisture threshold - must be between 0 and 1
+            K0: Upper zone recession coefficient - must be positive
+            K1: Lower zone recession coefficient - must be positive
+            PERC: Percolation rate (mm/day) - must be non-negative
         """
+        # Validate parameters
+        if FC <= 0:
+            raise ValueError("FC (soil moisture capacity) must be positive")
+        if BETA <= 0:
+            raise ValueError("BETA must be positive")
+        if not 0 < LP < 1:
+            raise ValueError("LP must be between 0 and 1")
+        if K0 <= 0:
+            raise ValueError("K0 must be positive")
+        if K1 <= 0:
+            raise ValueError("K1 must be positive")
+        if PERC < 0:
+            raise ValueError("PERC must be non-negative")
+        
         self.FC = FC
         self.BETA = BETA
         self.LP = LP
@@ -94,9 +108,10 @@ class HBV:
             EA = min(EA, self.SM)
             self.SM -= EA
             
-            # Recharge to groundwater
+            # Recharge to groundwater (ensure SM/FC ratio is bounded)
             if Prain > 0:
-                recharge = Prain * (self.SM / self.FC) ** self.BETA
+                sm_ratio = min(self.SM / self.FC, 1.0)  # Clip to [0, 1]
+                recharge = Prain * (sm_ratio ** self.BETA)
                 self.SM += Prain - recharge
                 
                 # Ensure soil moisture doesn't exceed capacity

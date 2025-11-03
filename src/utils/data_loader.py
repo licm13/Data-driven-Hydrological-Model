@@ -33,6 +33,10 @@ class HydrologicalDataLoader:
         """
         np.random.seed(seed)
         
+        # Runoff coefficient (typical value for moderately permeable soils)
+        # Represents the fraction of precipitation that becomes runoff
+        RUNOFF_COEFFICIENT = 0.7
+        
         # Generate synthetic meteorological and hydrological data
         dates = pd.date_range(start='2010-01-01', periods=n_samples, freq='D')
         
@@ -49,7 +53,7 @@ class HydrologicalDataLoader:
         
         for i in range(n_samples):
             # Simple storage-discharge model
-            inflow = data.loc[i, 'precipitation'] * 0.7  # Runoff coefficient
+            inflow = data.loc[i, 'precipitation'] * RUNOFF_COEFFICIENT
             et = min(storage * 0.05, data.loc[i, 'pet'])
             storage += inflow - et
             discharge[i] = max(0, storage * 0.1)

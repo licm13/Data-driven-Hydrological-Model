@@ -31,6 +31,7 @@ class EDDIS:
         self.poly_features = PolynomialFeatures(degree=poly_degree, include_bias=False)
         self.model = Ridge(alpha=alpha)
         self.is_fitted = False
+        self._poly_fitted = False  # Track if polynomial features are fitted
         
     def detect_events(self, precipitation: np.ndarray) -> np.ndarray:
         """
@@ -45,12 +46,13 @@ class EDDIS:
         events = (precipitation > self.event_threshold).astype(int)
         return events
     
-    def create_features(self, X: np.ndarray) -> np.ndarray:
+    def create_features(self, X: np.ndarray, fit: bool = False) -> np.ndarray:
         """
         Create enhanced features including event indicators
         
         Args:
             X: Input features [precipitation, temperature, pet]
+            fit: Whether to fit polynomial features transformer
             
         Returns:
             Enhanced features
@@ -66,7 +68,13 @@ class EDDIS:
         features = np.hstack([X, events, cum_precip])
         
         # Apply polynomial transformation
-        features_poly = self.poly_features.fit_transform(features)
+        if fit:
+            features_poly = self.poly_features.fit_transform(features)
+            self._poly_fitted = True
+        else:
+            if not self._poly_fitted:
+                raise ValueError("Polynomial features must be fitted before transform")
+            features_poly = self.poly_features.transform(features)
         
         return features_poly
     
@@ -79,7 +87,7 @@ class EDDIS:
             y_train: Training target (discharge)
         """
         # Create enhanced features
-        X_train_enhanced = self.create_features(X_train)
+        X_train_enhanced = self.create_features(X_train, fit=True)
         
         # Fit model
         self.model.fit(X_train_enhanced, y_train)
@@ -98,8 +106,8 @@ class EDDIS:
         if not self.is_fitted:
             raise ValueError("Model must be fitted before prediction")
         
-        # Create enhanced features
-        X_enhanced = self.create_features(X)
+        # Create enhanced features (use transform only)
+        X_enhanced = self.create_features(X, fit=False)
         
         # Predict
         y_pred = self.model.predict(X_enhanced)

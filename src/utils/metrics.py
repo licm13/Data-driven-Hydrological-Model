@@ -74,11 +74,19 @@ def kling_gupta_efficiency(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     Returns:
         KGE value (ranges from -inf to 1, with 1 being perfect)
     """
+    # Check for constant arrays
+    if np.std(y_true) == 0 or np.std(y_pred) == 0:
+        return -np.inf
+    
     # Correlation coefficient
     r = np.corrcoef(y_true, y_pred)[0, 1]
     
+    # Handle NaN correlation (shouldn't happen after std check, but be safe)
+    if np.isnan(r):
+        return -np.inf
+    
     # Variability ratio
-    alpha = np.std(y_pred) / np.std(y_true) if np.std(y_true) > 0 else 0
+    alpha = np.std(y_pred) / np.std(y_true)
     
     # Bias ratio
     beta = np.mean(y_pred) / np.mean(y_true) if np.mean(y_true) > 0 else 0
