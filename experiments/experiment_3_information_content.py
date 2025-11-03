@@ -7,6 +7,12 @@ import argparse
 from pathlib import Path
 import pickle
 
+# Ensure project root is on sys.path so `src.*` imports work when running this file directly
+import sys
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 from src.utils.data_loader import load_catchment_from_csv, load_multiple_catchments
 from src.metrics.entropy import joint_entropy, conditional_entropy
 from src.utils.visualization import plot_information_content

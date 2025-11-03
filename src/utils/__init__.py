@@ -1,5 +1,5 @@
 """
-åwýp!W
+Utility functions: data loading, generation, and visualization.
 """
 from .data_loader import (
     CatchmentData,

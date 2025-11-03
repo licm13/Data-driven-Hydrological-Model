@@ -1,5 +1,5 @@
 """
-Ä0!W
+Metrics package: entropy and KGE utilities.
 """
 from .entropy import (
     bin_data,

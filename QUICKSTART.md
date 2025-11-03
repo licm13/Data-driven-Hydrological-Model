@@ -28,6 +28,55 @@ python run_all_experiments.py --synthetic --quick_test
 
 将数据组织为以下结构：
 ```
+
+也支持直接使用 IMPRO 风格的 ASCII 数据目录（如 `F:/Github/Dataset/IMPRO_catchment_data_infotheo/iller`）。
+有两种方式：
+
+1) 自动检测（推荐先试）：
+
+```powershell
+# 直接把 --data_dir 指向包含流域子文件夹的根目录
+C:/Python314/python.exe experiments/experiment_1_learning_curves.py \
+    --catchment Iller \
+    --data_dir "F:/Github/Dataset/IMPRO_catchment_data_infotheo" \
+    --output_dir ./results
+```
+
+加载器会尝试在 `.../Iller` 目录中自动识别气象与径流文件（支持 .csv/.txt/.dat/.asc/.tsv，逗号/分号/tab/空格分隔），
+并通过常见列名（date/Date/DATE 或 year-month-day）识别日期，并标准化列名到 `precip,temp,pet,discharge`。
+
+2) 提供映射配置文件（更稳健）：
+
+在 `catchment` 目录放置 `config.yaml`（或在任意路径通过 `--config` 指定），例如：
+
+```yaml
+area: 954.0  # km^2 (可选)
+elevation_range: [500, 2200]  # m (可选)
+meteorology:
+    file: "meteo.txt"   # 相对 catchment 目录
+    sep: "\t"          # 可为 ',', ';', '\t', 'whitespace'
+    decimal: "."       # 可选
+    columns:            # 将原始列名映射为标准名（至少包含 date/precip/temp/pet）
+        date: "DATE"
+        precip: "P"
+        temp: "T"
+        pet: "PET"
+discharge:
+    file: "runoff.txt"
+    sep: "whitespace"
+    columns:
+        date: "DATE"
+        discharge: "Q"
+```
+
+或者，先把 ASCII 转成标准 CSV 以便后续重复使用：
+
+```powershell
+C:/Python314/python.exe scripts/convert_impro_ascii_to_csv.py \
+    --source "F:/Github/Dataset/IMPRO_catchment_data_infotheo/iller" \
+    --target "f:/Github/Data-driven-Hydrological-Model/data/raw/Iller"
+```
+随后将 `--data_dir` 指向 `./data/raw` 即可。
 data/raw/
 ├── Iller/
 │   ├── meteorology.csv  # date,precip,temp,pet

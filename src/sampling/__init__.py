@@ -1,5 +1,5 @@
 """
-pnÇ7Ve!W
+Sampling strategies for training data selection.
 """
 from .strategies import (
     random_sampling,

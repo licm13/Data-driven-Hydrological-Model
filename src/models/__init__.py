@@ -1,69 +1,54 @@
 """
-!‹å‚Œ¿wüe
+Model registry and lightweight imports for hydrological models.
+
+This module exposes a lazy get_model() to avoid importing heavy dependencies
+like PyTorch unless the corresponding model is actually requested.
+It also keeps HBV directly importable for convenience in scripts.
 """
-from .base_model import BaseHydrologicalModel
-from .gr4j import GR4J
-from .hbv import HBV
-from .swat_plus import SWATPlus
-from .eddis import EDDIS
-from .rtree import RTREE
-from .ann import ANN
-from .lstm import LSTM
+from importlib import import_module
+from typing import Any
+
+# Keep HBV directly importable (used by some experiment scripts)
+from .hbv import HBV  # noqa: F401
 
 __all__ = [
-    'BaseHydrologicalModel',
-    'GR4J',
     'HBV',
-    'SWATPlus',
-    'EDDIS',
-    'RTREE',
-    'ANN',
-    'LSTM',
     'get_model',
+    'PROCESS_BASED_MODELS',
+    'DATA_DRIVEN_MODELS',
+    'ALL_MODELS',
 ]
 
 
-def get_model(model_name: str, **kwargs):
+def get_model(model_name: str, **kwargs: Any):
+    """Factory that returns a model instance by name.
+
+    Supported names (case-insensitive): GR4J, HBV, SWAT+, EDDIS, RTREE, ANN, LSTM.
+    Heavy backends (e.g., PyTorch for LSTM) are imported lazily only when needed.
     """
-    !‹å‚ýp
-
-    Parameters:
-    -----------
-    model_name : str, !‹ð
-    **kwargs : !‹ËÂp
-
-    Returns:
-    --------
-    model : !‹ž‹
-
-    Example:
-    --------
-    >>> model = get_model('HBV', n_elevation_zones=3)
-    >>> model = get_model('LSTM', hidden_size=128)
-    """
-    models = {
-        'gr4j': GR4J,
-        'hbv': HBV,
-        'swat+': SWATPlus,
-        'swat': SWATPlus,
-        'eddis': EDDIS,
-        'rtree': RTREE,
-        'ann': ANN,
-        'lstm': LSTM,
+    mapping = {
+        'gr4j': ('src.models.gr4j', 'GR4J'),
+        'hbv': ('src.models.hbv', 'HBV'),
+        'swat+': ('src.models.swat_plus', 'SWATPlus'),
+        'swat': ('src.models.swat_plus', 'SWATPlus'),
+        'eddis': ('src.models.eddis', 'EDDIS'),
+        'rtree': ('src.models.rtree', 'RTREE'),
+        'ann': ('src.models.ann', 'ANN'),
+        'lstm': ('src.models.lstm', 'LSTM'),
     }
 
-    model_name_lower = model_name.lower()
-
-    if model_name_lower not in models:
+    key = model_name.lower()
+    if key not in mapping:
         raise ValueError(
-            f"Unknown model: {model_name}. "
-            f"Available models: {list(models.keys())}"
+            f"Unknown model: {model_name}. Available: {list(mapping.keys())}"
         )
 
-    return models[model_name_lower](**kwargs)
+    module_name, class_name = mapping[key]
+    module = import_module(module_name)
+    model_cls = getattr(module, class_name)
+    return model_cls(**kwargs)
 
 
-# !‹{
 PROCESS_BASED_MODELS = ['GR4J', 'HBV', 'SWAT+']
 DATA_DRIVEN_MODELS = ['EDDIS', 'RTREE', 'ANN', 'LSTM']
 ALL_MODELS = PROCESS_BASED_MODELS + DATA_DRIVEN_MODELS

@@ -8,6 +8,12 @@ from pathlib import Path
 import pickle
 from tqdm import tqdm
 
+# Ensure project root is on sys.path so `src.*` imports work when running this file directly
+import sys
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 from src.models import HBV
 from src.utils.data_loader import load_catchment_from_csv, generate_synthetic_data
 from src.sampling.strategies import consecutive_random_sampling
