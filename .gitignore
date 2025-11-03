@@ -7,6 +7,11 @@ __pycache__/
 *.so
 
 # Distribution / packaging
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
 .Python
 build/
 develop-eggs/
@@ -100,6 +105,9 @@ celerybeat.pid
 .venv
 env/
 venv/
+# Virtual environments
+venv/
+env/
 ENV/
 env.bak/
 venv.bak/
@@ -132,3 +140,32 @@ dmypy.json
 # OS
 .DS_Store
 Thumbs.db
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Data files
+*.csv
+*.xlsx
+*.h5
+*.hdf5
+
+# Model files
+*.pkl
+*.joblib
+*.pth
+*.h5
+
+# Results and outputs
+*.png
+*.jpg
+*.pdf
+learning_curves_results.csv
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+tmp/
+temp/
+*.log
