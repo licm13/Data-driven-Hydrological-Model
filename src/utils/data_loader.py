@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Dict, Tuple, Optional, List
 import re
 import yaml
-from ..utils.ml_utils import calculate_array_statistics
+from .ml_utils import calculate_array_statistics
 
 class CatchmentData:
     """流域数据类"""

@@ -8,7 +8,7 @@ import torch.nn as nn
 import torch.optim as optim
 from typing import Dict, Tuple, Optional, List
 from .base_model import BaseHydrologicalModel
-from ..utils.ml_utils import normalize_data
+from ..utils.ml_utils import normalize_data, create_sequences_for_lstm
 
 class LSTMModel(nn.Module):
     """PyTorch LSTM模型"""
@@ -132,7 +132,7 @@ class LSTM(BaseHydrologicalModel):
                          pet: np.ndarray,
                          discharge: Optional[np.ndarray] = None) -> Tuple:
         """
-        创建LSTM序列
+        创建LSTM序列 (使用优化的向量化实现)
         
         对于每个时间步t，创建序列：
         X[i] = [[P[t-seq:t], T[t-seq:t], PET[t-seq:t]]]
@@ -143,26 +143,9 @@ class LSTM(BaseHydrologicalModel):
         X_seq : array, shape (n_samples, seq_len, 3)
         y_seq : array, shape (n_samples,) or None
         """
-        n = len(precip)
-        n_samples = n - self.sequence_length
-        
-        # 输入特征：3个变量
-        X_seq = np.zeros((n_samples, self.sequence_length, 3))
-        
-        for i in range(n_samples):
-            start = i
-            end = i + self.sequence_length
-            
-            X_seq[i, :, 0] = precip[start:end]
-            X_seq[i, :, 1] = temp[start:end]
-            X_seq[i, :, 2] = pet[start:end]
-        
-        if discharge is not None:
-            # 目标：序列后的径流值
-            y_seq = discharge[self.sequence_length:]
-            return X_seq, y_seq
-        else:
-            return X_seq, None
+        return create_sequences_for_lstm(
+            precip, temp, pet, self.sequence_length, discharge
+        )
     
     def _normalize_data(self, features: np.ndarray, targets: Optional[np.ndarray] = None, 
                        fit: bool = True) -> Tuple:

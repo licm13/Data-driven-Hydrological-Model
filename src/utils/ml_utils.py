@@ -115,3 +115,110 @@ def calculate_array_statistics(data: np.ndarray, include_percentiles: bool = Fal
         })
     
     return stats
+
+
+def create_lagged_features(
+    precip: np.ndarray,
+    temp: np.ndarray,
+    pet: np.ndarray,
+    time_lag: int
+) -> np.ndarray:
+    """
+    Create time-lagged features efficiently using numpy stride tricks
+    
+    For each time step t, creates features:
+    [precip[t-lag:t+1], temp[t-lag:t+1], pet[t-lag:t+1]]
+    
+    Parameters:
+    -----------
+    precip : np.ndarray
+        Precipitation array
+    temp : np.ndarray
+        Temperature array
+    pet : np.ndarray
+        Potential evapotranspiration array
+    time_lag : int
+        Number of time steps to look back
+        
+    Returns:
+    --------
+    features : np.ndarray
+        Array of shape (n - lag, (lag+1) * 3)
+    """
+    num_timesteps = len(precip)
+    window_size = time_lag + 1
+    num_valid_samples = num_timesteps - time_lag
+    
+    # Stack all variables
+    data = np.column_stack([precip, temp, pet])
+    
+    # Use numpy's lib.stride_tricks for efficient sliding window
+    # This creates views without copying data
+    from numpy.lib.stride_tricks import sliding_window_view
+    
+    # Create sliding windows for each variable
+    windowed_data = sliding_window_view(data, window_shape=(window_size, 3))
+    
+    # Reshape to (num_samples, window_size * num_features)
+    features = windowed_data.reshape(num_valid_samples, -1)
+    
+    return features
+
+
+def create_sequences_for_lstm(
+    precip: np.ndarray,
+    temp: np.ndarray,
+    pet: np.ndarray,
+    sequence_length: int,
+    discharge: Optional[np.ndarray] = None
+) -> Tuple:
+    """
+    Create sequences for LSTM efficiently using numpy operations
+    
+    For each time step t, creates sequence:
+    X[i] = [[P[t-seq:t], T[t-seq:t], PET[t-seq:t]]]
+    y[i] = Q[t]
+    
+    Parameters:
+    -----------
+    precip : np.ndarray
+        Precipitation array
+    temp : np.ndarray
+        Temperature array
+    pet : np.ndarray
+        Potential evapotranspiration array
+    sequence_length : int
+        Length of input sequences
+    discharge : Optional[np.ndarray]
+        Discharge array for targets
+        
+    Returns:
+    --------
+    sequences : np.ndarray
+        Array of shape (n_samples, seq_len, 3)
+    targets : Optional[np.ndarray]
+        Array of shape (n_samples,) or None
+    """
+    num_timesteps = len(precip)
+    num_samples = num_timesteps - sequence_length
+    
+    # Stack all input features - shape: (num_timesteps, 3)
+    data = np.stack([precip, temp, pet], axis=-1)
+    
+    # Use sliding_window_view for efficient window creation
+    from numpy.lib.stride_tricks import sliding_window_view
+    
+    # Create sliding windows along the first axis (time)
+    sequences = sliding_window_view(data, window_shape=sequence_length, axis=0)
+    # Result has shape: (num_timesteps - sequence_length + 1, 3, sequence_length)
+    # We need: (num_samples, sequence_length, 3)
+    # So transpose the last two dimensions
+    sequences = sequences[:num_samples].transpose(0, 2, 1)
+    
+    if discharge is not None:
+        # Target: discharge values after each sequence
+        targets = discharge[sequence_length:]
+        return sequences, targets
+    else:
+        return sequences, None
+
