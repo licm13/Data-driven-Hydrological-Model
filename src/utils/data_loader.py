@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Dict, Tuple, Optional, List
 import re
 import yaml
+from .ml_utils import calculate_array_statistics
 
 class CatchmentData:
     """流域数据类"""
@@ -113,32 +114,10 @@ class CatchmentData:
     def get_statistics(self) -> Dict:
         """计算数据统计特征"""
         return {
-            'precip': {
-                'mean': np.mean(self.precip),
-                'std': np.std(self.precip),
-                'max': np.max(self.precip),
-                'min': np.min(self.precip),
-            },
-            'temp': {
-                'mean': np.mean(self.temp),
-                'std': np.std(self.temp),
-                'max': np.max(self.temp),
-                'min': np.min(self.temp),
-            },
-            'pet': {
-                'mean': np.mean(self.pet),
-                'std': np.std(self.pet),
-                'max': np.max(self.pet),
-                'min': np.min(self.pet),
-            },
-            'discharge': {
-                'mean': np.mean(self.discharge),
-                'std': np.std(self.discharge),
-                'max': np.max(self.discharge),
-                'min': np.min(self.discharge),
-                'q95': np.percentile(self.discharge, 95),
-                'q5': np.percentile(self.discharge, 5),
-            }
+            'precip': calculate_array_statistics(self.precip),
+            'temp': calculate_array_statistics(self.temp),
+            'pet': calculate_array_statistics(self.pet),
+            'discharge': calculate_array_statistics(self.discharge, include_percentiles=True),
         }
     
     def to_dataframe(self) -> pd.DataFrame:
@@ -293,11 +272,11 @@ def _read_table_with_date(
             print(f"Failed to read as ASCII time series, trying generic: {e}")
             # Fall through to generic reading
 
-    seps = [specified_sep] if specified_sep else [',', ';', '\t', None]
+    separators = [specified_sep] if specified_sep else [',', ';', '\t', None]
     errors = []
-    df: Optional[pd.DataFrame] = None
+    dataframe: Optional[pd.DataFrame] = None
     
-    for sep in seps:
+    for sep in separators:
         try:
             read_kwargs = {
                 'engine': 'python',
@@ -314,47 +293,47 @@ def _read_table_with_date(
             if decimal is not None:
                 read_kwargs['decimal'] = decimal
                 
-            df = pd.read_csv(file_path, **read_kwargs)
+            dataframe = pd.read_csv(file_path, **read_kwargs)
             
             # Check if we got reasonable data
-            if len(df) > 0 and len(df.columns) > 1:
+            if len(dataframe) > 0 and len(dataframe.columns) > 1:
                 break
             else:
-                df = None
+                dataframe = None
                 
         except Exception as e:
             errors.append((sep, str(e)))
-            df = None
+            dataframe = None
             
-    if df is None:
+    if dataframe is None:
         raise ValueError(f"Failed to read {file_path} with tried seps: {errors}")
 
     # Clean up column names (remove whitespace, handle encoding issues)
-    df.columns = [str(col).strip() for col in df.columns]
+    dataframe.columns = [str(col).strip() for col in dataframe.columns]
 
     # Normalize columns
     if columns_map:
-        df = df.rename(columns=columns_map)
+        dataframe = dataframe.rename(columns=columns_map)
 
     # Try to construct 'date'
-    cols_lower = {c.lower(): c for c in df.columns}
+    cols_lower = {col.lower(): col for col in dataframe.columns}
     date_col = next((cols_lower[c.lower()] for c in DATE_CANDIDATES if c.lower() in cols_lower), None)
 
     if date_col is not None:
         try:
-            df['date'] = pd.to_datetime(df[date_col])
+            dataframe['date'] = pd.to_datetime(dataframe[date_col])
         except Exception as e:
             print(f"Failed to parse date column {date_col}: {e}")
             # Try alternative date parsing
-            df['date'] = pd.to_datetime(df[date_col], errors='coerce')
-            if df['date'].isna().all():
+            dataframe['date'] = pd.to_datetime(dataframe[date_col], errors='coerce')
+            if dataframe['date'].isna().all():
                 raise ValueError(f"Could not parse any dates from column {date_col}")
     else:
         # Try year, month, day pattern
         def find_col(names: List[str]) -> Optional[str]:
-            for n in names:
-                for col in df.columns:
-                    if col.lower() == n:
+            for name in names:
+                for col in dataframe.columns:
+                    if col.lower() == name:
                         return col
             return None
             
@@ -364,29 +343,29 @@ def _read_table_with_date(
         
         if all([year_col, month_col, day_col]):
             try:
-                tmp = df[[year_col, month_col, day_col]].astype(int).copy()
-                tmp.columns = ['year', 'month', 'day']
-                df['date'] = pd.to_datetime(tmp)
+                temp_df = dataframe[[year_col, month_col, day_col]].astype(int).copy()
+                temp_df.columns = ['year', 'month', 'day']
+                dataframe['date'] = pd.to_datetime(temp_df)
             except Exception as e:
                 raise ValueError(f"Could not construct date from year/month/day columns: {e}")
         else:
             # Try to infer from index or create artificial dates
-            if len(df) > 0:
+            if len(dataframe) > 0:
                 print(f"Warning: No date column found in {file_path}, creating artificial dates")
-                df['date'] = pd.date_range('2000-01-01', periods=len(df), freq='D')
+                dataframe['date'] = pd.date_range('2000-01-01', periods=len(dataframe), freq='D')
             else:
                 raise ValueError(
                     f"Could not infer date column in {file_path}. Provide config.yaml with columns mapping."
                 )
 
     # Ensure 'date' is first-class and sorted
-    if 'date' not in df.columns:
+    if 'date' not in dataframe.columns:
         raise ValueError(f"No date parsed from {file_path}")
     
     # Remove rows with invalid dates
-    df = df.dropna(subset=['date'])
+    dataframe = dataframe.dropna(subset=['date'])
     
-    return df
+    return dataframe
 
 
 def _read_asc_time_series(file_path: Path) -> pd.DataFrame:
@@ -496,29 +475,29 @@ def _load_catchment_from_folder_generic(
     # 1) Explicit config mapping
     if 'meteorology' in cfg and 'discharge' in cfg:
         met_cfg = cfg['meteorology']
-        q_cfg = cfg['discharge']
+        discharge_cfg = cfg['discharge']
         met_file = (catchment_dir / met_cfg.get('file')).resolve()
-        q_file = (catchment_dir / q_cfg.get('file')).resolve()
-        met_df = _read_table_with_date(
+        discharge_file = (catchment_dir / discharge_cfg.get('file')).resolve()
+        met_dataframe = _read_table_with_date(
             met_file,
             specified_sep=met_cfg.get('sep'),
             decimal=met_cfg.get('decimal'),
             columns_map=met_cfg.get('columns'),
         )
-        q_df = _read_table_with_date(
-            q_file,
-            specified_sep=q_cfg.get('sep'),
-            decimal=q_cfg.get('decimal'),
-            columns_map=q_cfg.get('columns'),
+        discharge_dataframe = _read_table_with_date(
+            discharge_file,
+            specified_sep=discharge_cfg.get('sep'),
+            decimal=discharge_cfg.get('decimal'),
+            columns_map=discharge_cfg.get('columns'),
         )
         # Standardize names if provided
-        met_df = _standardize_meteorology_columns(met_df)
-        q_df = _standardize_discharge_columns(q_df)
-        return met_df, q_df
+        met_dataframe = _standardize_meteorology_columns(met_dataframe)
+        discharge_dataframe = _standardize_discharge_columns(discharge_dataframe)
+        return met_dataframe, discharge_dataframe
 
     # 2) Catchment-specific file detection
     files = list(catchment_dir.glob('**/*'))
-    cand = [f for f in files if f.suffix.lower() in ('.csv', '.txt', '.dat', '.asc', '.tsv')]
+    candidate_files = [file for file in files if file.suffix.lower() in ('.csv', '.txt', '.dat', '.asc', '.tsv')]
     
     # Create catchment name variants for file matching
     catchment_variants = []
@@ -532,7 +511,7 @@ def _load_catchment_from_folder_generic(
 
     def has_keywords(path: Path, keywords: List[str]) -> bool:
         name = path.name.lower()
-        return any(k in name for k in keywords)
+        return any(keyword in name for keyword in keywords)
     
     def has_catchment_specific(path: Path, variable_keywords: List[str]) -> bool:
         """Check if file matches catchment-specific pattern like 'discharge_iller.csv'"""
@@ -545,32 +524,32 @@ def _load_catchment_from_folder_generic(
         return False
 
     # Discharge detection (prioritize catchment-specific files)
-    q_keywords = ['discharge', 'runoff', 'flow', 'qobs', 'q_', 'q-']
-    q_files = []
+    discharge_keywords = ['discharge', 'runoff', 'flow', 'qobs', 'q_', 'q-']
+    discharge_files = []
     
     # First, try catchment-specific files
     if catchment_variants:
-        q_files.extend([f for f in cand if has_catchment_specific(f, q_keywords)])
+        discharge_files.extend([file for file in candidate_files if has_catchment_specific(file, discharge_keywords)])
     
     # Then, try general keyword matching
-    if not q_files:
-        q_files = [f for f in cand if has_keywords(f, q_keywords)]
+    if not discharge_files:
+        discharge_files = [file for file in candidate_files if has_keywords(file, discharge_keywords)]
     
-    q_df = None
-    for f in q_files:
+    discharge_dataframe = None
+    for file_path in discharge_files:
         try:
-            print(f"Trying to load discharge from: {f}")
-            df = _read_table_with_date(f)
-            df = _standardize_discharge_columns(df)
-            q_df = df
-            print(f"Successfully loaded discharge data with {len(df)} records")
+            print(f"Trying to load discharge from: {file_path}")
+            dataframe = _read_table_with_date(file_path)
+            dataframe = _standardize_discharge_columns(dataframe)
+            discharge_dataframe = dataframe
+            print(f"Successfully loaded discharge data with {len(dataframe)} records")
             break
         except Exception as e:
-            print(f"Failed to load {f}: {e}")
+            print(f"Failed to load {file_path}: {e}")
             continue
     
-    if q_df is None:
-        available_files = [f.name for f in cand]
+    if discharge_dataframe is None:
+        available_files = [file.name for file in candidate_files]
         raise FileNotFoundError(
             f"Could not find discharge file in {catchment_dir}. "
             f"Available files: {available_files}. "
@@ -583,28 +562,28 @@ def _load_catchment_from_folder_generic(
     
     # First, try catchment-specific combined meteorology files
     if catchment_variants:
-        met_files.extend([f for f in cand if has_catchment_specific(f, met_keywords)])
+        met_files.extend([file for file in candidate_files if has_catchment_specific(file, met_keywords)])
     
     # Then, try general keyword matching
     if not met_files:
-        met_files = [f for f in cand if has_keywords(f, met_keywords)]
+        met_files = [file for file in candidate_files if has_keywords(file, met_keywords)]
     
-    met_df = None
-    for f in met_files:
+    met_dataframe = None
+    for file_path in met_files:
         try:
-            print(f"Trying to load meteorology from: {f}")
-            df = _read_table_with_date(f)
-            df = _standardize_meteorology_columns(df)
-            if {'precip', 'temp', 'pet'}.issubset(df.columns):
-                met_df = df
-                print(f"Successfully loaded combined meteorology data with {len(df)} records")
+            print(f"Trying to load meteorology from: {file_path}")
+            dataframe = _read_table_with_date(file_path)
+            dataframe = _standardize_meteorology_columns(dataframe)
+            if {'precip', 'temp', 'pet'}.issubset(dataframe.columns):
+                met_dataframe = dataframe
+                print(f"Successfully loaded combined meteorology data with {len(dataframe)} records")
                 break
         except Exception as e:
-            print(f"Failed to load combined meteorology from {f}: {e}")
+            print(f"Failed to load combined meteorology from {file_path}: {e}")
             continue
 
     # If not combined, try separate series and merge
-    if met_df is None:
+    if met_dataframe is None:
         print("Trying to load separate meteorology files...")
         # Prioritize catchment-specific files
         precip_files = []
@@ -612,44 +591,44 @@ def _load_catchment_from_folder_generic(
         pet_files = []
         
         if catchment_variants:
-            precip_files.extend([f for f in cand if has_catchment_specific(f, ['precip', 'precipitation', 'ppt', 'pr'])])
-            temp_files.extend([f for f in cand if has_catchment_specific(f, ['temp', 'temperature', 'tmean', 't'])])
-            pet_files.extend([f for f in cand if has_catchment_specific(f, ['pet', 'evap', 'et0', 'eto', 'evapo'])])
+            precip_files.extend([file for file in candidate_files if has_catchment_specific(file, ['precip', 'precipitation', 'ppt', 'pr'])])
+            temp_files.extend([file for file in candidate_files if has_catchment_specific(file, ['temp', 'temperature', 'tmean', 't'])])
+            pet_files.extend([file for file in candidate_files if has_catchment_specific(file, ['pet', 'evap', 'et0', 'eto', 'evapo'])])
         
         # Fallback to general keyword matching
         if not precip_files:
-            precip_files = [f for f in cand if has_keywords(f, ['precip', 'ppt', 'pr'])]
+            precip_files = [file for file in candidate_files if has_keywords(file, ['precip', 'ppt', 'pr'])]
         if not temp_files:
-            temp_files = [f for f in cand if has_keywords(f, ['temp', 'tmean', 't'])]
+            temp_files = [file for file in candidate_files if has_keywords(file, ['temp', 'tmean', 't'])]
         if not pet_files:
-            pet_files = [f for f in cand if has_keywords(f, ['pet', 'evap', 'et0', 'eto', 'evapo'])]
+            pet_files = [file for file in candidate_files if has_keywords(file, ['pet', 'evap', 'et0', 'eto', 'evapo'])]
 
         parts = {}
-        for label, flist in [('precip', precip_files), ('temp', temp_files), ('pet', pet_files)]:
-            for f in flist:
+        for label, file_list in [('precip', precip_files), ('temp', temp_files), ('pet', pet_files)]:
+            for file_path in file_list:
                 try:
-                    print(f"Trying to load {label} from: {f}")
-                    df = _read_table_with_date(f)
+                    print(f"Trying to load {label} from: {file_path}")
+                    dataframe = _read_table_with_date(file_path)
                     # Pick first numeric column (besides date)
-                    value_cols = [c for c in df.columns if c != 'date' and pd.api.types.is_numeric_dtype(df[c])]
+                    value_cols = [col for col in dataframe.columns if col != 'date' and pd.api.types.is_numeric_dtype(dataframe[col])]
                     if not value_cols:
-                        print(f"No numeric columns found in {f}")
+                        print(f"No numeric columns found in {file_path}")
                         continue
-                    parts[label] = df[['date', value_cols[0]]].rename(columns={value_cols[0]: label})
+                    parts[label] = dataframe[['date', value_cols[0]]].rename(columns={value_cols[0]: label})
                     print(f"Successfully loaded {label} data with {len(parts[label])} records")
                     break
                 except Exception as e:
-                    print(f"Failed to load {label} from {f}: {e}")
+                    print(f"Failed to load {label} from {file_path}: {e}")
                     continue
         
         if set(parts.keys()) == {'precip', 'temp', 'pet'}:
-            met_df = parts['precip']
-            met_df = met_df.merge(parts['temp'], on='date', how='inner')
-            met_df = met_df.merge(parts['pet'], on='date', how='inner')
-            print(f"Successfully merged separate meteorology files, {len(met_df)} records")
+            met_dataframe = parts['precip']
+            met_dataframe = met_dataframe.merge(parts['temp'], on='date', how='inner')
+            met_dataframe = met_dataframe.merge(parts['pet'], on='date', how='inner')
+            print(f"Successfully merged separate meteorology files, {len(met_dataframe)} records")
         else:
             missing = {'precip', 'temp', 'pet'} - set(parts.keys())
-            available_files = [f.name for f in cand]
+            available_files = [file.name for file in candidate_files]
             raise FileNotFoundError(
                 f"Could not detect meteorology files in {catchment_dir}. "
                 f"Missing: {missing}. Available files: {available_files}. "
@@ -657,61 +636,61 @@ def _load_catchment_from_folder_generic(
             )
 
     # Final standardization and sorting
-    met_df = _standardize_meteorology_columns(met_df)
-    q_df = _standardize_discharge_columns(q_df)
-    return met_df.sort_values('date'), q_df.sort_values('date')
+    met_dataframe = _standardize_meteorology_columns(met_dataframe)
+    discharge_dataframe = _standardize_discharge_columns(discharge_dataframe)
+    return met_dataframe.sort_values('date'), discharge_dataframe.sort_values('date')
 
 
-def _standardize_meteorology_columns(df: pd.DataFrame) -> pd.DataFrame:
+def _standardize_meteorology_columns(dataframe: pd.DataFrame) -> pd.DataFrame:
     rename_map = {}
-    cols = {c.lower(): c for c in df.columns}
+    cols = {col.lower(): col for col in dataframe.columns}
     # Precipitation
-    for k in ['precip', 'ppt', 'pr', 'p']:
-        if k in cols:
-            rename_map[cols[k]] = 'precip'
+    for key in ['precip', 'ppt', 'pr', 'p']:
+        if key in cols:
+            rename_map[cols[key]] = 'precip'
             break
     # Temperature
-    for k in ['temp', 'tmean', 't']:
-        if k in cols:
-            rename_map[cols[k]] = 'temp'
+    for key in ['temp', 'tmean', 't']:
+        if key in cols:
+            rename_map[cols[key]] = 'temp'
             break
     # PET
-    for k in ['pet', 'et0', 'eto', 'evap', 'evapo']:
-        if k in cols:
-            rename_map[cols[k]] = 'pet'
+    for key in ['pet', 'et0', 'eto', 'evap', 'evapo']:
+        if key in cols:
+            rename_map[cols[key]] = 'pet'
             break
     # Date
-    for k in DATE_CANDIDATES:
-        if k.lower() in cols:
-            rename_map[cols[k.lower()]] = 'date'
+    for key in DATE_CANDIDATES:
+        if key.lower() in cols:
+            rename_map[cols[key.lower()]] = 'date'
             break
-    df2 = df.rename(columns=rename_map)
+    standardized_df = dataframe.rename(columns=rename_map)
     needed = {'date', 'precip', 'temp', 'pet'}
-    if not needed.issubset(df2.columns):
-        missing = needed - set(df2.columns)
+    if not needed.issubset(standardized_df.columns):
+        missing = needed - set(standardized_df.columns)
         raise ValueError(f"Meteorology file missing columns: {missing}")
-    return df2[['date', 'precip', 'temp', 'pet']]
+    return standardized_df[['date', 'precip', 'temp', 'pet']]
 
 
-def _standardize_discharge_columns(df: pd.DataFrame) -> pd.DataFrame:
+def _standardize_discharge_columns(dataframe: pd.DataFrame) -> pd.DataFrame:
     rename_map = {}
-    cols = {c.lower(): c for c in df.columns}
+    cols = {col.lower(): col for col in dataframe.columns}
     # Discharge
-    for k in ['discharge', 'qobs', 'runoff', 'flow', 'q']:
-        if k in cols:
-            rename_map[cols[k]] = 'discharge'
+    for key in ['discharge', 'qobs', 'runoff', 'flow', 'q']:
+        if key in cols:
+            rename_map[cols[key]] = 'discharge'
             break
     # Date
-    for k in DATE_CANDIDATES:
-        if k.lower() in cols:
-            rename_map[cols[k.lower()]] = 'date'
+    for key in DATE_CANDIDATES:
+        if key.lower() in cols:
+            rename_map[cols[key.lower()]] = 'date'
             break
-    df2 = df.rename(columns=rename_map)
+    standardized_df = dataframe.rename(columns=rename_map)
     needed = {'date', 'discharge'}
-    if not needed.issubset(df2.columns):
-        missing = needed - set(df2.columns)
+    if not needed.issubset(standardized_df.columns):
+        missing = needed - set(standardized_df.columns)
         raise ValueError(f"Discharge file missing columns: {missing}")
-    return df2[['date', 'discharge']]
+    return standardized_df[['date', 'discharge']]
 
 
 def generate_synthetic_data(n_days: int = 3650,

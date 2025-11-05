@@ -8,6 +8,7 @@ import torch.nn as nn
 import torch.optim as optim
 from typing import Dict, Tuple, Optional
 from .base_model import BaseHydrologicalModel
+from ..utils.ml_utils import normalize_data, create_lagged_features
 
 class ANNModel(nn.Module):
     """PyTorch神经网络模型"""
@@ -93,7 +94,7 @@ class ANN(BaseHydrologicalModel):
                                temp: np.ndarray, 
                                pet: np.ndarray) -> np.ndarray:
         """
-        创建时间滞后特征
+        创建时间滞后特征 (使用优化的向量化实现)
         
         对于每个时间步t，创建特征：
         [precip[t-lag:t+1], temp[t-lag:t+1], pet[t-lag:t+1]]
@@ -102,39 +103,19 @@ class ANN(BaseHydrologicalModel):
         --------
         features : array, shape (n - lag, (lag+1) * 3)
         """
-        n = len(precip)
-        n_features = (self.time_lag + 1) * 3
-        
-        # 有效样本数
-        n_valid = n - self.time_lag
-        features = np.zeros((n_valid, n_features))
-        
-        for i in range(n_valid):
-            idx = i + self.time_lag
-            # 降水滞后
-            features[i, :self.time_lag+1] = precip[idx-self.time_lag:idx+1]
-            # 温度滞后
-            features[i, self.time_lag+1:2*(self.time_lag+1)] = temp[idx-self.time_lag:idx+1]
-            # 蒸发滞后
-            features[i, 2*(self.time_lag+1):] = pet[idx-self.time_lag:idx+1]
-        
-        return features
+        return create_lagged_features(precip, temp, pet, self.time_lag)
     
-    def _normalize_data(self, X: np.ndarray, y: np.ndarray, 
+    def _normalize_data(self, features: np.ndarray, targets: np.ndarray, 
                        fit: bool = True) -> Tuple[np.ndarray, np.ndarray]:
         """标准化数据"""
-        from sklearn.preprocessing import StandardScaler
-        
-        if fit:
-            self.scaler_X = StandardScaler()
-            self.scaler_y = StandardScaler()
-            X_norm = self.scaler_X.fit_transform(X)
-            y_norm = self.scaler_y.fit_transform(y.reshape(-1, 1)).flatten()
-        else:
-            X_norm = self.scaler_X.transform(X)
-            y_norm = self.scaler_y.transform(y.reshape(-1, 1)).flatten()
-        
-        return X_norm, y_norm
+        normalized_features, normalized_targets, self.scaler_X, self.scaler_y = normalize_data(
+            features=features,
+            targets=targets,
+            feature_scaler=self.scaler_X,
+            target_scaler=self.scaler_y,
+            fit=fit
+        )
+        return normalized_features, normalized_targets
     
     def train(self, 
               precip: np.ndarray, 

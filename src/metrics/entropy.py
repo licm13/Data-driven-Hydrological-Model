@@ -56,14 +56,14 @@ def bin_data(data: np.ndarray, n_bins: int = 12, method: str = 'kmeans') -> Tupl
     return binned_data, bin_edges
 
 
-def joint_entropy(X: np.ndarray, Y: Optional[np.ndarray] = None, n_bins: int = 12) -> float:
+def joint_entropy(features: np.ndarray, targets: Optional[np.ndarray] = None, n_bins: int = 12) -> float:
     """
-    计算联合熵 H(X, Y) 或边际熵 H(X)
+    计算联合熵 H(features, targets) 或边际熵 H(features)
     
     Parameters:
     -----------
-    X : array, 变量1（可以是多维）
-    Y : array, 变量2（可选）
+    features : array, 变量1（可以是多维）
+    targets : array, 变量2（可选）
     n_bins : int, 分箱数
     
     Returns:
@@ -71,54 +71,63 @@ def joint_entropy(X: np.ndarray, Y: Optional[np.ndarray] = None, n_bins: int = 1
     H_joint : float, 联合熵 [bits]
     """
     # 确保是2D数组
-    if X.ndim == 1:
-        X = X.reshape(-1, 1)
+    if features.ndim == 1:
+        features = features.reshape(-1, 1)
     
     # 分箱
-    X_binned = np.zeros_like(X, dtype=int)
-    for i in range(X.shape[1]):
-        X_binned[:, i], _ = bin_data(X[:, i], n_bins, method='kmeans')
+    features_binned = np.zeros_like(features, dtype=int)
+    for i in range(features.shape[1]):
+        features_binned[:, i], _ = bin_data(features[:, i], n_bins, method='kmeans')
     
-    if Y is not None:
-        if Y.ndim == 1:
-            Y = Y.reshape(-1, 1)
-        Y_binned = np.zeros_like(Y, dtype=int)
-        for i in range(Y.shape[1]):
-            Y_binned[:, i], _ = bin_data(Y[:, i], n_bins, method='kmeans')
+    if targets is not None:
+        if targets.ndim == 1:
+            targets = targets.reshape(-1, 1)
+        targets_binned = np.zeros_like(targets, dtype=int)
+        for i in range(targets.shape[1]):
+            targets_binned[:, i], _ = bin_data(targets[:, i], n_bins, method='kmeans')
         
         # 合并
-        XY = np.hstack([X_binned, Y_binned])
+        combined_data = np.hstack([features_binned, targets_binned])
     else:
-        XY = X_binned
+        combined_data = features_binned
     
     # 计算联合概率分布
-    # 将多维索引转为1D
-    n_samples = XY.shape[0]
-    n_dims = XY.shape[1]
+    # 使用更高效的方法：将多维索引转为1D，使用numpy的unique函数
+    num_samples = combined_data.shape[0]
+    num_dims = combined_data.shape[1]
     
-    # 创建唯一键
-    keys = [''.join(map(str, row)) for row in XY]
-    unique_keys, counts = np.unique(keys, return_counts=True)
+    # Convert multi-dimensional indices to unique 1D keys using numpy operations
+    # More efficient than string concatenation
+    if num_dims == 1:
+        unique_vals, counts = np.unique(combined_data, return_counts=True)
+    else:
+        # Use a hash-like approach with prime number multiplication for multi-dimensional data
+        # This is much faster than string concatenation
+        combined_keys = combined_data[:, 0].copy()
+        for dim in range(1, num_dims):
+            combined_keys = combined_keys * (n_bins + 1) + combined_data[:, dim]
+        unique_vals, counts = np.unique(combined_keys, return_counts=True)
     
     # 概率
-    probs = counts / n_samples
+    probs = counts / num_samples
     
     # 熵（以bits为单位，使用log2）
-    H = -np.sum(probs * np.log2(probs + 1e-10))
+    # Add small epsilon to avoid log(0)
+    entropy_value = -np.sum(probs * np.log2(probs + 1e-10))
     
-    return H
+    return entropy_value
 
 
-def conditional_entropy(Y_obs: np.ndarray, Y_pred: np.ndarray, n_bins: int = 12) -> float:
+def conditional_entropy(observed: np.ndarray, predicted: np.ndarray, n_bins: int = 12) -> float:
     """
-    计算条件熵 H(Y_obs | Y_pred)
+    计算条件熵 H(observed | predicted)
     
     衡量给定模型预测后，观测值的剩余不确定性
     
     Parameters:
     -----------
-    Y_obs : array, 观测值
-    Y_pred : array, 预测值
+    observed : array, 观测值
+    predicted : array, 预测值
     n_bins : int, 分箱数
     
     Returns:
@@ -126,91 +135,94 @@ def conditional_entropy(Y_obs: np.ndarray, Y_pred: np.ndarray, n_bins: int = 12)
     H_cond : float, 条件熵 [bits]
     """
     # 分箱
-    Y_obs_binned, _ = bin_data(Y_obs, n_bins, method='kmeans')
-    Y_pred_binned, _ = bin_data(Y_pred, n_bins, method='kmeans')
+    observed_binned, _ = bin_data(observed, n_bins, method='kmeans')
+    predicted_binned, _ = bin_data(predicted, n_bins, method='kmeans')
     
-    n_samples = len(Y_obs)
+    num_samples = len(observed)
     
-    # 计算 P(Y_obs, Y_pred)
-    joint_counts = {}
-    for i in range(n_samples):
-        key = (Y_obs_binned[i], Y_pred_binned[i])
-        joint_counts[key] = joint_counts.get(key, 0) + 1
+    # Use numpy operations for efficiency instead of dictionaries and loops
+    # Create joint distribution using 2D histogram
+    joint_hist, _, _ = np.histogram2d(
+        observed_binned, predicted_binned, 
+        bins=[n_bins, n_bins],
+        range=[[0, n_bins-1], [0, n_bins-1]]
+    )
     
-    # 计算 P(Y_pred)
-    pred_counts = {}
-    for i in range(n_samples):
-        key = Y_pred_binned[i]
-        pred_counts[key] = pred_counts.get(key, 0) + 1
+    # Get marginal distribution for predictions
+    pred_hist = np.bincount(predicted_binned, minlength=n_bins)
     
+    # Calculate conditional entropy using vectorized operations
     # H(Y_obs | Y_pred) = -Σ P(y_obs, y_pred) * log2[P(y_obs, y_pred) / P(y_pred)]
-    H_cond = 0.0
-    for (y_obs, y_pred), joint_count in joint_counts.items():
-        p_joint = joint_count / n_samples
-        p_pred = pred_counts[y_pred] / n_samples
-        p_cond = p_joint / p_pred
-        H_cond -= p_joint * np.log2(p_cond + 1e-10)
+    joint_probs = joint_hist / num_samples
+    pred_probs = pred_hist / num_samples
+    
+    # Avoid division by zero and log of zero
+    mask = (joint_probs > 0) & (pred_probs[np.newaxis, :] > 0)
+    conditional_probs = np.zeros_like(joint_probs)
+    conditional_probs[mask] = joint_probs[mask] / pred_probs[np.newaxis, :][mask]
+    
+    H_cond = -np.sum(joint_probs[mask] * np.log2(conditional_probs[mask]))
     
     return H_cond
 
 
-def mutual_information(X: np.ndarray, Y: np.ndarray, n_bins: int = 12) -> float:
+def mutual_information(features: np.ndarray, targets: np.ndarray, n_bins: int = 12) -> float:
     """
-    计算互信息 I(X; Y) = H(Y) - H(Y|X)
+    计算互信息 I(features; targets) = H(targets) - H(targets|features)
     
     Parameters:
     -----------
-    X : array, 变量1
-    Y : array, 变量2
+    features : array, 变量1
+    targets : array, 变量2
     n_bins : int, 分箱数
     
     Returns:
     --------
     MI : float, 互信息 [bits]
     """
-    H_Y = joint_entropy(Y, n_bins=n_bins)
-    H_Y_given_X = conditional_entropy(Y, X, n_bins=n_bins)
+    H_targets = joint_entropy(targets, n_bins=n_bins)
+    H_targets_given_features = conditional_entropy(targets, features, n_bins=n_bins)
     
-    MI = H_Y - H_Y_given_X
-    return MI
+    mutual_info = H_targets - H_targets_given_features
+    return mutual_info
 
 
-def normalized_conditional_entropy(Y_obs: np.ndarray, 
-                                   Y_pred: np.ndarray, 
+def normalized_conditional_entropy(observed: np.ndarray, 
+                                   predicted: np.ndarray, 
                                    n_bins: int = 12) -> float:
     """
-    归一化条件熵 H_norm = H(Y_obs | Y_pred) / H(Y_obs)
+    归一化条件熵 H_norm = H(observed | predicted) / H(observed)
     
     范围 [0, 1]，0表示完美预测
     
     Parameters:
     -----------
-    Y_obs : array, 观测值
-    Y_pred : array, 预测值
+    observed : array, 观测值
+    predicted : array, 预测值
     n_bins : int, 分箱数
     
     Returns:
     --------
     H_norm : float, 归一化条件熵
     """
-    H_cond = conditional_entropy(Y_obs, Y_pred, n_bins)
-    H_obs = joint_entropy(Y_obs, n_bins=n_bins)
+    H_cond = conditional_entropy(observed, predicted, n_bins)
+    H_obs = joint_entropy(observed, n_bins=n_bins)
     
     H_norm = H_cond / (H_obs + 1e-10)
     return H_norm
 
 
 # 主评估函数
-def evaluate_model_entropy(obs: np.ndarray, 
-                          sim: np.ndarray, 
+def evaluate_model_entropy(observed: np.ndarray, 
+                          simulated: np.ndarray, 
                           n_bins: int = 12) -> dict:
     """
     使用信息熵评估模型性能
     
     Parameters:
     -----------
-    obs : array, 观测径流
-    sim : array, 模拟径流
+    observed : array, 观测径流
+    simulated : array, 模拟径流
     n_bins : int, 分箱数
     
     Returns:
@@ -218,17 +230,17 @@ def evaluate_model_entropy(obs: np.ndarray,
     metrics : dict, 包含各种熵指标
     """
     # 移除缺测值
-    mask = ~(np.isnan(obs) | np.isnan(sim))
-    obs = obs[mask]
-    sim = sim[mask]
+    mask = ~(np.isnan(observed) | np.isnan(simulated))
+    observed = observed[mask]
+    simulated = simulated[mask]
     
     # 计算各种熵
-    H_obs = joint_entropy(obs, n_bins=n_bins)
-    H_sim = joint_entropy(sim, n_bins=n_bins)
-    H_joint = joint_entropy(np.column_stack([obs, sim]), n_bins=n_bins)
-    H_cond = conditional_entropy(obs, sim, n_bins=n_bins)
+    H_obs = joint_entropy(observed, n_bins=n_bins)
+    H_sim = joint_entropy(simulated, n_bins=n_bins)
+    H_joint = joint_entropy(np.column_stack([observed, simulated]), n_bins=n_bins)
+    H_cond = conditional_entropy(observed, simulated, n_bins=n_bins)
     H_norm = H_cond / H_obs if H_obs > 0 else 1.0
-    MI = mutual_information(sim, obs, n_bins=n_bins)
+    mutual_info = mutual_information(simulated, observed, n_bins=n_bins)
     
     metrics = {
         'H_obs': H_obs,              # 观测熵
@@ -236,7 +248,7 @@ def evaluate_model_entropy(obs: np.ndarray,
         'H_joint': H_joint,          # 联合熵
         'H_conditional': H_cond,     # 条件熵
         'H_normalized': H_norm,      # 归一化条件熵
-        'mutual_information': MI,    # 互信息
+        'mutual_information': mutual_info,    # 互信息
         'explained_variance': 1 - H_norm,  # 解释方差（类似R²）
     }
     
