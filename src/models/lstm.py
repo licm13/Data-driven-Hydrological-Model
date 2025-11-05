@@ -8,6 +8,7 @@ import torch.nn as nn
 import torch.optim as optim
 from typing import Dict, Tuple, Optional, List
 from .base_model import BaseHydrologicalModel
+from ..utils.ml_utils import normalize_data
 
 class LSTMModel(nn.Module):
     """PyTorch LSTM模型"""
@@ -163,37 +164,17 @@ class LSTM(BaseHydrologicalModel):
         else:
             return X_seq, None
     
-    def _normalize_data(self, X: np.ndarray, y: Optional[np.ndarray] = None, 
+    def _normalize_data(self, features: np.ndarray, targets: Optional[np.ndarray] = None, 
                        fit: bool = True) -> Tuple:
         """标准化数据"""
-        from sklearn.preprocessing import StandardScaler
-        
-        # X是3D: (n_samples, seq_len, n_features)
-        n_samples, seq_len, n_features = X.shape
-        
-        if fit:
-            self.scaler_X = StandardScaler()
-            # 重塑为2D进行标准化
-            X_2d = X.reshape(-1, n_features)
-            X_norm_2d = self.scaler_X.fit_transform(X_2d)
-            X_norm = X_norm_2d.reshape(n_samples, seq_len, n_features)
-            
-            if y is not None:
-                self.scaler_y = StandardScaler()
-                y_norm = self.scaler_y.fit_transform(y.reshape(-1, 1)).flatten()
-            else:
-                y_norm = None
-        else:
-            X_2d = X.reshape(-1, n_features)
-            X_norm_2d = self.scaler_X.transform(X_2d)
-            X_norm = X_norm_2d.reshape(n_samples, seq_len, n_features)
-            
-            if y is not None:
-                y_norm = self.scaler_y.transform(y.reshape(-1, 1)).flatten()
-            else:
-                y_norm = None
-        
-        return X_norm, y_norm
+        normalized_features, normalized_targets, self.scaler_X, self.scaler_y = normalize_data(
+            features=features,
+            targets=targets,
+            feature_scaler=self.scaler_X,
+            target_scaler=self.scaler_y,
+            fit=fit
+        )
+        return normalized_features, normalized_targets
     
     def train(self, 
               precip: np.ndarray, 

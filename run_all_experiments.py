@@ -101,7 +101,7 @@ def find_data_subdirectory(dataset_dir):
                 return str(data_path)
     
     # 如果没找到合适的子目录，列出所有可用的子目录
-    available_subdirs = [d.name for d in dataset_path.iterdir() if d.is_dir()]
+    available_subdirs = [directory.name for directory in dataset_path.iterdir() if directory.is_dir()]
     raise FileNotFoundError(
         f"在 Dataset 目录中未找到包含数据文件的子目录！\n"
         f"Dataset 路径: {dataset_dir}\n"

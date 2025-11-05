@@ -8,6 +8,7 @@ import torch.nn as nn
 import torch.optim as optim
 from typing import Dict, Tuple, Optional
 from .base_model import BaseHydrologicalModel
+from ..utils.ml_utils import normalize_data
 
 class ANNModel(nn.Module):
     """PyTorch神经网络模型"""
@@ -120,21 +121,17 @@ class ANN(BaseHydrologicalModel):
         
         return features
     
-    def _normalize_data(self, X: np.ndarray, y: np.ndarray, 
+    def _normalize_data(self, features: np.ndarray, targets: np.ndarray, 
                        fit: bool = True) -> Tuple[np.ndarray, np.ndarray]:
         """标准化数据"""
-        from sklearn.preprocessing import StandardScaler
-        
-        if fit:
-            self.scaler_X = StandardScaler()
-            self.scaler_y = StandardScaler()
-            X_norm = self.scaler_X.fit_transform(X)
-            y_norm = self.scaler_y.fit_transform(y.reshape(-1, 1)).flatten()
-        else:
-            X_norm = self.scaler_X.transform(X)
-            y_norm = self.scaler_y.transform(y.reshape(-1, 1)).flatten()
-        
-        return X_norm, y_norm
+        normalized_features, normalized_targets, self.scaler_X, self.scaler_y = normalize_data(
+            features=features,
+            targets=targets,
+            feature_scaler=self.scaler_X,
+            target_scaler=self.scaler_y,
+            fit=fit
+        )
+        return normalized_features, normalized_targets
     
     def train(self, 
               precip: np.ndarray, 
