@@ -68,11 +68,14 @@ def train_and_evaluate_model(
         raise ValueError(f"Not enough data: {total_days} days, need {warmup_days + train_size}")
 
     # 采样训练数据
+    # 采样训练数据
+    # random_sampling 返回一个列表，我们为单次运行获取第一个样本
     train_indices = random_sampling(
         n_total=total_days - warmup_days,
         n_sample=train_size,
+        n_replicates=1,  # 每次只生成一个样本
         seed=seed
-    )
+    )[0]
     train_indices = train_indices + warmup_days  # 调整为全局索引
 
     # 准备测试数据（使用所有预热期后的数据）
