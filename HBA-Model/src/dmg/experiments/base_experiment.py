@@ -456,10 +456,10 @@ class BaseExperiment(ABC):
             current = self.config
 
             for key in keys:
-                if not OmegaConf.select(current, key):
+                if OmegaConf.select(current, key, default='__MISSING__') == '__MISSING__':
                     missing_keys.append(key_path)
                     break
-                current = current[key]
+
 
         if missing_keys:
             raise ValueError(
