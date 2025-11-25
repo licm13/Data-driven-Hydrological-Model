@@ -1,0 +1,176 @@
+# Learning Curves Experiment Configuration
+# ==========================================
+# This experiment analyzes how model performance improves with increasing training data size
+
+defaults:
+  - override /hydra: default
+
+# Experiment metadata
+experiment:
+  name: learning_curves
+  description: "Analyze model learning ability vs training data size (Staudinger et al. 2025)"
+  type: replicated_sampling
+
+# Data configuration
+data:
+  source: csv  # Options: camels, csv, impro
+  catchments:
+    - Iller
+    - Saale
+    - Selke
+
+  data_dir: ${oc.env:DATA_DIR,'./Dataset/IMPRO_catchment_data_infotheo'}
+
+  # Time periods
+  periods:
+    train:
+      start: '2001-01-01'
+      end: '2010-12-31'
+    test:
+      start: '2012-01-01'
+      end: '2015-12-31'
+    warmup_days: 365
+
+  # Sampling strategy
+  sampling:
+    strategy: consecutive_random  # Options: consecutive_random, douglas_peucker, stratified
+    sample_sizes: [2, 10, 50, 100, 250, 500, 1000, 2000, 3000, 3654]
+    n_replicates: 30
+    seed: 42
+
+# Model configurations
+models:
+  # Pure physical model (calibrated with Spotpy)
+  - name: HBV
+    type: physics
+    training:
+      method: spotpy
+      algorithm: lhs  # Options: lhs, mc, sceua, dream, de
+      n_iterations: 500
+      objective: kge  # Options: kge, nse, rmse
+    parameters:
+      # Format: [default, min, max]
+      TT: [0.0, -2.5, 2.5]
+      CFMAX: [3.5, 1.0, 10.0]
+      SFCF: [1.0, 0.4, 1.5]
+      CFR: [0.05, 0.0, 0.1]
+      CWH: [0.1, 0.0, 0.2]
+      FC: [250.0, 50.0, 700.0]
+      LP: [0.7, 0.3, 1.0]
+      BETA: [2.0, 1.0, 6.0]
+      PERC: [2.0, 0.0, 8.0]
+      UZL: [50.0, 0.0, 100.0]
+      K0: [0.2, 0.05, 0.5]
+      K1: [0.1, 0.01, 0.3]
+      K2: [0.05, 0.001, 0.15]
+      MAXBAS: [2.5, 1.0, 7.0]
+
+  # Data-driven model (gradient descent)
+  - name: LSTM
+    type: neural_network
+    training:
+      method: gradient_descent
+      optimizer: Adam
+      learning_rate: 0.001
+      epochs: 50
+      batch_size: 256
+    architecture:
+      sequence_length: 365
+      hidden_size: 64
+      num_layers: 2
+      dropout: 0.1
+
+  # Differentiable Parameter Learning model (hybrid training)
+  - name: dPL-HBV
+    type: dpl
+    training:
+      method: hybrid  # Two-phase: spotpy → gradient descent
+      pretrain:
+        algorithm: lhs
+        n_iterations: 200
+        objective: kge
+      finetune:
+        optimizer: Adadelta
+        learning_rate: 1.0
+        epochs: 30
+        batch_size: 32
+    components:
+      nn_model:
+        type: LSTM
+        hidden_size: 32
+        num_layers: 1
+        sequence_length: 365
+      phy_model:
+        type: HBV
+        learnable_params:  # NN learns these parameters
+          - FC
+          - BETA
+          - K0
+          - K1
+          - K2
+
+# Evaluation metrics
+metrics:
+  performance:
+    - name: KGE
+      description: Kling-Gupta Efficiency
+    - name: NSE
+      description: Nash-Sutcliffe Efficiency
+    - name: RMSE
+      description: Root Mean Square Error
+
+  information_theory:
+    - name: H_conditional
+      description: Conditional Entropy H(Obs|Sim)
+      params:
+        n_bins: 12
+    - name: H_normalized
+      description: Normalized Entropy
+      params:
+        n_bins: 12
+    - name: mutual_information
+      description: Mutual Information I(Obs;Sim)
+      params:
+        n_bins: 12
+
+# Output configuration
+output:
+  base_dir: ./results/experiments/learning_curves
+  save_format:
+    - pickle
+    - csv
+
+  visualization:
+    enabled: true
+    plots:
+      - type: learning_curve
+        x_axis: sample_size
+        y_axis: H_conditional
+        groupby: model
+        style: median_with_iqr  # Median + 25th-75th percentile
+
+      - type: metric_comparison
+        metrics: [KGE, H_conditional]
+        models: all
+        layout: grid
+
+  reports:
+    generate_latex: false
+    generate_html: true
+
+# Computational resources
+compute:
+  device: cuda  # Options: cuda, cpu
+  num_workers: 4
+  parallel_replicates: true  # Run replicates in parallel
+
+# Reproducibility
+random_seed: 42
+
+# Hydra overrides (for command line)
+hydra:
+  run:
+    dir: ${output.base_dir}/${now:%Y-%m-%d_%H-%M-%S}
+  sweep:
+    dir: ${output.base_dir}/multirun/${now:%Y-%m-%d_%H-%M-%S}
+    subdir: ${hydra.job.num}
