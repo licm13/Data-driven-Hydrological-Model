@@ -405,8 +405,31 @@ def convert_discharge(Q_m3s, area_km2):
     """
     将流量从m³/s转换为mm/day
     
-    Q_mm = Q_m3s * 86400 / (area_km2 * 1000)
+    Convert discharge from m³/s to mm/day using basin area.
+    
+    Parameters:
+    -----------
+    Q_m3s : float or array
+        Discharge in cubic meters per second
+    area_km2 : float
+        Basin area in square kilometers
+        
+    Returns:
+    --------
+    Q_mm : float or array
+        Discharge in mm/day (basin average)
+        
+    Formula:
+        Q_mm = Q_m3s * 86400 / (area_km2 * 1000)
+        
+    Raises:
+    -------
+    ValueError
+        If area_km2 is zero or negative
     """
+    if area_km2 <= 0:
+        raise ValueError(f"Basin area must be positive, got {area_km2} km²")
+    
     return Q_m3s * 86400 / (area_km2 * 1000)
 ```
 

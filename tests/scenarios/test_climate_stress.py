@@ -154,16 +154,26 @@ class ClimateStressTest(unittest.TestCase):
     
     @classmethod
     def setUpClass(cls):
-        """Set up test data and models."""
+        """
+        Set up test data and models.
+        
+        Note: Model availability is checked at runtime using optional imports.
+        Tests that require specific models will be skipped if unavailable,
+        allowing the core climate modification tests to run independently.
+        This approach allows flexible testing across different environments.
+        """
         np.random.seed(42)
         cls.base_data = generate_synthetic_climate_data(n_years=5)
         
-        # Try to import models
+        # Optional model imports - tests requiring models will be skipped if unavailable
+        # This pattern allows running core tests without all dependencies installed
+        cls.hbv_available = False
         try:
             from src.models.hbv import HBV
+            cls.hbv_model_class = HBV
             cls.hbv_available = True
         except ImportError:
-            cls.hbv_available = False
+            cls.hbv_model_class = None
             
     def test_climate_modifier_temperature(self):
         """Test that temperature modification works correctly."""
@@ -203,8 +213,9 @@ class ClimateStressTest(unittest.TestCase):
         """
         if not self.hbv_available:
             self.skipTest("HBV model not available")
-            
-        from src.models.hbv import HBV
+        
+        # Use stored model class reference to avoid re-importing
+        HBV = self.hbv_model_class
         
         # Create HBV model
         hbv = HBV(n_elevation_zones=1)

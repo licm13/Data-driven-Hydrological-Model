@@ -47,6 +47,17 @@ class ExtremeEventGenerator:
         """
         Generate a precipitation series with an extreme event.
         
+        The default event_magnitude of 200mm over 3 days represents approximately
+        a 100-year return period event for many temperate regions. This is based
+        on typical intensity-duration-frequency (IDF) relationships where:
+        - 100-year daily rainfall: ~100-150mm (varies by region)
+        - Multi-day events can accumulate 150-300mm
+        
+        Statistical Assumptions:
+        - Background precipitation follows an exponential distribution (common for daily precip)
+        - Extreme events are deterministic for reproducibility
+        - Return period estimation uses simplified GEV distribution assumptions
+        
         Parameters:
         -----------
         n_days : int
@@ -54,7 +65,8 @@ class ExtremeEventGenerator:
         event_day : int
             Day when extreme event starts
         event_magnitude : float
-            Total precipitation during extreme event (mm)
+            Total precipitation during extreme event (mm). Default 200mm represents
+            approximately a 100-year event for temperate regions.
         event_duration : int
             Duration of extreme event in days
             
