@@ -156,12 +156,20 @@ def conditional_entropy(observed: np.ndarray, predicted: np.ndarray, n_bins: int
     joint_probs = joint_hist / num_samples
     pred_probs = pred_hist / num_samples
     
-    # Avoid division by zero and log of zero
-    mask = (joint_probs > 0) & (pred_probs[np.newaxis, :] > 0)
-    conditional_probs = np.zeros_like(joint_probs)
-    conditional_probs[mask] = joint_probs[mask] / pred_probs[np.newaxis, :][mask]
+    # Broadcast pred_probs to match joint_probs shape
+    pred_probs_broadcast = pred_probs[np.newaxis, :]
     
-    H_cond = -np.sum(joint_probs[mask] * np.log2(conditional_probs[mask]))
+    # Avoid division by zero and log of zero
+    mask = (joint_probs > 0) & (pred_probs_broadcast > 0)
+    
+    # Calculate conditional entropy element by element
+    H_cond = 0.0
+    for i in range(n_bins):
+        for j in range(n_bins):
+            if mask[i, j]:
+                p_joint = joint_probs[i, j]
+                p_pred = pred_probs[j]
+                H_cond -= p_joint * np.log2(p_joint / p_pred)
     
     return H_cond
 
